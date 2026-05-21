@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>CinemaVault</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --bg2: #111118;
+    --bg3: #1a1a24;
+    --bg4: #22222e;
+    --card: #16161f;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --accent: #e8c547;
+    --accent2: #ff6b35;
+    --text: #f0eff5;
+    --text2: #9997aa;
+    --text3: #5a5870;
+    --green: #4ecca3;
+    --red: #ff4757;
+    --radius: 14px;
+    --radius-sm: 8px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; background:var(--bg); color:var(--text); font-family:'DM Sans', sans-serif; overflow:hidden; }
+
+  /* ── SPLASH ── */
+  #splash {
+    position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; z-index:100; gap:12px;
+    animation: splashOut 0.4s ease 1.8s forwards;
+  }
+  @keyframes splashOut { to { opacity:0; pointer-events:none; } }
+  .splash-logo { font-family:'Bebas Neue',sans-serif; font-size:52px; letter-spacing:4px; color:var(--accent); }
+  .splash-sub { font-size:12px; color:var(--text3); letter-spacing:3px; text-transform:uppercase; }
+  .splash-bar { width:120px; height:2px; background:var(--bg3); border-radius:2px; margin-top:20px; overflow:hidden; }
+  .splash-bar-inner { height:100%; background:var(--accent); animation: barFill 1.6s ease forwards; width:0; }
+  @keyframes barFill { to { width:100%; } }
+
+  /* ── LAYOUT ── */
+  #app { height:100vh; display:flex; flex-direction:column; max-width:480px; margin:0 auto; position:relative; }
+
+  /* ── HEADER ── */
+  .header {
+    padding:16px 20px 12px;
+    background: linear-gradient(180deg, var(--bg) 0%, transparent 100%);
+    position:relative; z-index:10;
+  }
+  .header-top { display:flex; align-items:center; justify-content:space-between; }
+  .logo { font-family:'Bebas Neue',sans-serif; font-size:28px; letter-spacing:3px; color:var(--accent); }
+  .header-actions { display:flex; gap:8px; }
+  .icon-btn {
+    width:36px; height:36px; border-radius:50%; border:1px solid var(--border2);
+    background:var(--bg3); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:16px; color:var(--text2); transition:all 0.2s;
+  }
+  .icon-btn:active { transform:scale(0.92); background:var(--bg4); }
+  .stats-row { display:flex; gap:16px; margin-top:14px; }
+  .stat-chip {
+    display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text3);
+    background:var(--bg3); border:1px solid var(--border); border-radius:20px;
+    padding:5px 12px;
+  }
+  .stat-chip b { color:var(--text); font-weight:600; }
+  .stat-dot { width:6px; height:6px; border-radius:50%; }
+
+  /* ── NAV ── */
+  .nav {
+    display:flex; background:var(--bg2); border-top:1px solid var(--border);
+    padding:8px 0 max(8px, env(safe-area-inset-bottom));
+    position:sticky; bottom:0; z-index:10;
+  }
+  .nav-item {
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;
+    font-size:10px; color:var(--text3); cursor:pointer; padding:6px 0;
+    transition:all 0.2s; letter-spacing:0.5px; text-transform:uppercase;
+    border:none; background:none;
+  }
+  .nav-item .ni { font-size:20px; }
+  .nav-item.active { color:var(--accent); }
+  .nav-item.active .ni { color:var(--accent); }
+
+  /* ── SCREENS ── */
+  .screen { display:none; flex:1; overflow-y:auto; overflow-x:hidden; padding-bottom:80px; }
+  .screen.active { display:block; }
+  .screen::-webkit-scrollbar { display:none; }
+
+  /* ── SEARCH BAR ── */
+  .search-wrap { padding:12px 20px 8px; position:sticky; top:0; background:var(--bg); z-index:5; }
+  .search-box {
+    display:flex; align-items:center; gap:10px;
+    background:var(--bg3); border:1px solid var(--border); border-radius:12px;
+    padding:0 14px; height:42px;
+  }
+  .search-box input {
+    flex:1; background:none; border:none; outline:none; font-size:14px;
+    color:var(--text); font-family:'DM Sans',sans-serif;
+  }
+  .search-box input::placeholder { color:var(--text3); }
+  .search-box .si { color:var(--text3); font-size:16px; }
+
+  /* ── SORT/FILTER ROW ── */
+  .filter-row { display:flex; gap:8px; padding:8px 20px 12px; overflow-x:auto; }
+  .filter-row::-webkit-scrollbar { display:none; }
+  .filter-chip {
+    white-space:nowrap; padding:6px 14px; border-radius:20px; font-size:12px; font-weight:500;
+    border:1px solid var(--border2); background:var(--bg3); color:var(--text2);
+    cursor:pointer; transition:all 0.2s; flex-shrink:0;
+  }
+  .filter-chip.active { background:var(--accent); color:#000; border-color:var(--accent); }
+
+  /* ── SECTION HEADER ── */
+  .section-header { display:flex; align-items:center; justify-content:space-between; padding:4px 20px 12px; }
+  .section-title { font-size:13px; color:var(--text3); letter-spacing:1px; text-transform:uppercase; }
+  .section-count { font-size:12px; color:var(--text3); background:var(--bg3); padding:3px 10px; border-radius:10px; }
+
+  /* ── MOVIE CARDS ── */
+  .movies-grid { padding:0 20px; display:flex; flex-direction:column; gap:10px; }
+  .movie-card {
+    background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+    display:flex; gap:12px; padding:12px; cursor:pointer; transition:all 0.2s;
+    position:relative; overflow:hidden;
+  }
+  .movie-card:active { transform:scale(0.98); border-color:var(--border2); }
+  .movie-card.watched { opacity:0.6; }
+  .movie-card.watched::after {
+    content:''; position:absolute; left:0; top:0; bottom:0; width:3px;
+    background:var(--green);
+  }
+  .movie-poster {
+    width:60px; height:88px; border-radius:8px; object-fit:cover; flex-shrink:0;
+    background:var(--bg3);
+  }
+  .poster-placeholder {
+    width:60px; height:88px; border-radius:8px; background:var(--bg3);
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    font-size:22px; color:var(--text3); border:1px solid var(--border);
+  }
+  .movie-info { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
+  .movie-title {
+    font-size:15px; font-weight:600; color:var(--text); line-height:1.3;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .movie-meta { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .meta-pill {
+    font-size:10px; padding:2px 8px; border-radius:10px; font-weight:500;
+    background:var(--bg4); color:var(--text3); white-space:nowrap;
+  }
+  .meta-pill.year { color:var(--accent); background:rgba(232,197,71,0.1); }
+  .meta-pill.runtime { color:var(--text2); }
+  .genre-line { font-size:11px; color:var(--text3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .card-actions { display:flex; flex-direction:column; gap:6px; align-items:flex-end; justify-content:space-between; }
+  .watch-btn {
+    width:30px; height:30px; border-radius:50%; border:1px solid var(--border2);
+    background:var(--bg4); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:13px; color:var(--text2); transition:all 0.2s;
+  }
+  .watch-btn.watched { background:rgba(78,204,163,0.15); border-color:var(--green); color:var(--green); }
+  .verdict-line {
+    font-size:10px; color:var(--text3); font-style:italic;
+    max-width:70px; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+
+  /* ── SURPRISE BTN ── */
+  .surprise-wrap { padding:16px 20px 4px; }
+  .surprise-btn {
+    width:100%; padding:14px; border-radius:var(--radius); border:1px dashed var(--border2);
+    background:transparent; color:var(--text2); font-family:'DM Sans',sans-serif;
+    font-size:14px; font-weight:500; cursor:pointer; transition:all 0.2s;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .surprise-btn:active { background:var(--bg3); border-style:solid; }
+
+  /* ── ADD SCREEN ── */
+  .add-screen { padding:20px; display:flex; flex-direction:column; gap:16px; }
+  .add-tabs { display:flex; gap:0; background:var(--bg3); border-radius:10px; padding:3px; }
+  .add-tab {
+    flex:1; padding:9px; text-align:center; font-size:13px; font-weight:500;
+    border-radius:8px; cursor:pointer; color:var(--text3); transition:all 0.2s; border:none;
+    background:none; font-family:'DM Sans',sans-serif;
+  }
+  .add-tab.active { background:var(--bg); color:var(--text); }
+  .add-panel { display:none; flex-direction:column; gap:12px; }
+  .add-panel.active { display:flex; }
+  .field-label { font-size:11px; color:var(--text3); letter-spacing:1px; text-transform:uppercase; margin-bottom:4px; }
+  .field-input {
+    width:100%; padding:12px 14px; background:var(--bg3); border:1px solid var(--border);
+    border-radius:var(--radius-sm); color:var(--text); font-family:'DM Sans',sans-serif;
+    font-size:14px; outline:none; transition:border 0.2s;
+  }
+  .field-input:focus { border-color:var(--accent); }
+  .field-input::placeholder { color:var(--text3); }
+  textarea.field-input { resize:vertical; min-height:120px; line-height:1.6; }
+  .primary-btn {
+    width:100%; padding:15px; border-radius:var(--radius-sm); border:none;
+    background:var(--accent); color:#000; font-family:'DM Sans',sans-serif;
+    font-size:15px; font-weight:600; cursor:pointer; transition:all 0.2s;
+  }
+  .primary-btn:active { transform:scale(0.98); opacity:0.9; }
+  .primary-btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .secondary-btn {
+    width:100%; padding:13px; border-radius:var(--radius-sm); border:1px solid var(--border2);
+    background:transparent; color:var(--text2); font-family:'DM Sans',sans-serif;
+    font-size:14px; font-weight:500; cursor:pointer; transition:all 0.2s;
+  }
+  .secondary-btn:active { background:var(--bg3); }
+  .parse-result {
+    background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm);
+    padding:12px; display:none; flex-direction:column; gap:6px;
+  }
+  .parse-item {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 10px; background:var(--bg4); border-radius:6px;
+    font-size:12px;
+  }
+  .parse-item-name { color:var(--text); font-weight:500; flex:1; }
+  .parse-item-meta { color:var(--text3); font-size:11px; }
+  .parse-status { font-size:11px; color:var(--text3); }
+
+  /* ── MODAL ── */
+  .modal-overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:50;
+    display:none; align-items:flex-end;
+  }
+  .modal-overlay.open { display:flex; }
+  .modal {
+    background:var(--bg2); border-radius:24px 24px 0 0; width:100%; max-width:480px;
+    margin:0 auto; padding:24px 20px max(24px, env(safe-area-inset-bottom));
+    border-top:1px solid var(--border2);
+    animation: slideUp 0.3s ease;
+    max-height:90vh; overflow-y:auto;
+  }
+  @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+  .modal-handle { width:36px; height:4px; background:var(--border2); border-radius:2px; margin:0 auto 20px; }
+  .modal-poster {
+    width:80px; height:118px; border-radius:10px; object-fit:cover;
+    background:var(--bg3); float:left; margin:0 16px 12px 0;
+  }
+  .modal-poster-placeholder {
+    width:80px; height:118px; border-radius:10px; background:var(--bg3);
+    float:left; margin:0 16px 12px 0; display:flex; align-items:center;
+    justify-content:center; font-size:32px; color:var(--text3); flex-shrink:0;
+  }
+  .modal-title { font-family:'Bebas Neue',sans-serif; font-size:26px; letter-spacing:2px; line-height:1.1; }
+  .modal-year { font-size:13px; color:var(--accent); margin-top:4px; }
+  .modal-genre { font-size:12px; color:var(--text3); margin-top:4px; }
+  .modal-runtime { font-size:12px; color:var(--text2); margin-top:2px; }
+  .clearfix::after { content:''; display:table; clear:both; }
+  .modal-divider { height:1px; background:var(--border); margin:16px 0; }
+  .review-section { display:flex; flex-direction:column; gap:10px; }
+  .review-label { font-size:11px; color:var(--text3); letter-spacing:1px; text-transform:uppercase; margin-bottom:4px; }
+  .date-row { display:flex; gap:10px; }
+  .date-row .field-input { flex:1; }
+  .watched-toggle {
+    display:flex; align-items:center; gap:12px; padding:12px 14px;
+    background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm);
+    cursor:pointer;
+  }
+  .toggle-track {
+    width:42px; height:24px; border-radius:12px; background:var(--bg4);
+    border:1px solid var(--border2); position:relative; transition:all 0.25s; flex-shrink:0;
+  }
+  .toggle-track.on { background:var(--green); border-color:var(--green); }
+  .toggle-thumb {
+    position:absolute; width:18px; height:18px; border-radius:50%;
+    background:#fff; top:2px; left:2px; transition:all 0.25s;
+  }
+  .toggle-track.on .toggle-thumb { left:20px; }
+  .toggle-label { font-size:14px; color:var(--text); }
+  .save-review-btn {
+    width:100%; padding:15px; border-radius:var(--radius-sm); border:none;
+    background:var(--accent); color:#000; font-family:'DM Sans',sans-serif;
+    font-size:15px; font-weight:600; cursor:pointer; margin-top:8px;
+  }
+
+  /* ── SETUP SCREEN ── */
+  .setup-screen { padding:24px 20px; display:flex; flex-direction:column; gap:20px; }
+  .setup-title { font-family:'Bebas Neue',sans-serif; font-size:32px; letter-spacing:2px; color:var(--accent); }
+  .setup-desc { font-size:14px; color:var(--text2); line-height:1.6; }
+  .setup-step {
+    background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+    padding:16px;
+  }
+  .step-num { font-size:11px; color:var(--text3); letter-spacing:1px; text-transform:uppercase; margin-bottom:8px; }
+  .step-title { font-size:15px; font-weight:600; color:var(--text); margin-bottom:6px; }
+  .step-desc { font-size:13px; color:var(--text2); line-height:1.5; }
+  .step-link { color:var(--accent); text-decoration:none; }
+  .connected-badge {
+    display:inline-flex; align-items:center; gap:6px;
+    background:rgba(78,204,163,0.1); color:var(--green);
+    border:1px solid rgba(78,204,163,0.3); border-radius:20px;
+    padding:4px 12px; font-size:12px; margin-top:10px;
+  }
+  .url-status { font-size:12px; margin-top:6px; min-height:16px; }
+  .url-status.ok { color:var(--green); }
+  .url-status.err { color:var(--red); }
+
+  /* ── TOAST ── */
+  .toast {
+    position:fixed; bottom:90px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:var(--bg3); border:1px solid var(--border2); border-radius:10px;
+    padding:10px 18px; font-size:13px; color:var(--text);
+    opacity:0; transition:all 0.25s; pointer-events:none; z-index:200; white-space:nowrap;
+  }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* ── EMPTY STATE ── */
+  .empty-state { text-align:center; padding:60px 20px; color:var(--text3); }
+  .empty-state .ei { font-size:48px; margin-bottom:12px; }
+  .empty-state p { font-size:14px; line-height:1.6; }
+
+  /* ── LOADING SPINNER ── */
+  .spinner {
+    width:20px; height:20px; border:2px solid var(--border2);
+    border-top-color:var(--accent); border-radius:50%;
+    animation:spin 0.7s linear infinite; flex-shrink:0;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ── STATS SCREEN ── */
+  .stats-screen { padding:20px; display:flex; flex-direction:column; gap:16px; }
+  .stats-title { font-family:'Bebas Neue',sans-serif; font-size:28px; letter-spacing:2px; color:var(--accent); }
+  .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .stat-card {
+    background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+    padding:16px; display:flex; flex-direction:column; gap:4px;
+  }
+  .stat-card-num { font-family:'Bebas Neue',sans-serif; font-size:36px; color:var(--accent); letter-spacing:1px; }
+  .stat-card-label { font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:1px; }
+  .genre-bar-list { display:flex; flex-direction:column; gap:8px; }
+  .genre-bar-item { display:flex; flex-direction:column; gap:4px; }
+  .genre-bar-top { display:flex; justify-content:space-between; font-size:12px; }
+  .genre-bar-name { color:var(--text2); }
+  .genre-bar-count { color:var(--text3); }
+  .genre-bar-track { height:4px; background:var(--bg3); border-radius:2px; overflow:hidden; }
+  .genre-bar-fill { height:100%; background:var(--accent); border-radius:2px; transition:width 0.6s ease; }
+
+  /* ── XLXS IMPORT ── */
+  .import-zone {
+    border:2px dashed var(--border2); border-radius:var(--radius); padding:30px;
+    text-align:center; cursor:pointer; transition:all 0.2s;
+  }
+  .import-zone:hover { border-color:var(--accent); background:rgba(232,197,71,0.03); }
+  .import-zone-icon { font-size:32px; color:var(--text3); margin-bottom:8px; }
+  .import-zone-text { font-size:13px; color:var(--text3); }
+  #xlsx-file-input { display:none; }
+
+  .rating-row { display:flex; gap:8px; }
+  .rating-btn {
+    flex:1; padding:10px 6px; border-radius:8px; border:1px solid var(--border);
+    background:var(--bg3); color:var(--text3); font-size:18px; cursor:pointer;
+    transition:all 0.2s; text-align:center;
+  }
+  .rating-btn.selected { border-color:var(--accent); background:rgba(232,197,71,0.12); }
+</style>
+</head>
+<body>
+
+<div id="splash">
+  <div class="splash-logo">CinemaVault</div>
+  <div class="splash-sub">Your personal film archive</div>
+  <div class="splash-bar"><div class="splash-bar-inner"></div></div>
+</div>
+
+<div id="app">
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-top">
+      <div class="logo">CinemaVault</div>
+      <div class="header-actions">
+        <div class="icon-btn" onclick="shufflePick()" title="Surprise me">🎲</div>
+        <div class="icon-btn" onclick="showScreen('setup')" title="Settings">⚙️</div>
+      </div>
+    </div>
+    <div class="stats-row" id="header-stats">
+      <div class="stat-chip"><div class="stat-dot" style="background:#e8c547"></div><b id="hstat-total">0</b> total</div>
+      <div class="stat-chip"><div class="stat-dot" style="background:#4ecca3"></div><b id="hstat-watched">0</b> watched</div>
+      <div class="stat-chip"><div class="stat-dot" style="background:#ff6b35"></div><b id="hstat-unwatched">0</b> to watch</div>
+    </div>
+  </div>
+
+  <!-- BROWSE SCREEN -->
+  <div id="screen-browse" class="screen active">
+    <div class="search-wrap">
+      <div class="search-box">
+        <span class="si">🔍</span>
+        <input type="text" id="search-input" placeholder="Search movies, series..." oninput="renderList()">
+      </div>
+    </div>
+    <div class="filter-row">
+      <div class="filter-chip active" data-filter="all" onclick="setFilter('all',this)">All</div>
+      <div class="filter-chip" data-filter="unwatched" onclick="setFilter('unwatched',this)">To Watch</div>
+      <div class="filter-chip" data-filter="watched" onclick="setFilter('watched',this)">Watched</div>
+      <div class="filter-chip" data-sort="alpha" onclick="setSort('alpha',this)">A–Z</div>
+      <div class="filter-chip" data-sort="year" onclick="setSort('year',this)">Year</div>
+      <div class="filter-chip" data-sort="runtime" onclick="setSort('runtime',this)">Runtime</div>
+      <div class="filter-chip" data-sort="genre" onclick="setSort('genre',this)">Genre</div>
+    </div>
+    <div class="surprise-wrap">
+      <button class="surprise-btn" onclick="shufflePick()">🎲 &nbsp; Surprise me — pick something random</button>
+    </div>
+    <div class="section-header">
+      <span class="section-title">Your List</span>
+      <span class="section-count" id="list-count">0 titles</span>
+    </div>
+    <div class="movies-grid" id="movies-grid"></div>
+    <div class="empty-state" id="empty-state" style="display:none">
+      <div class="ei">🎬</div>
+      <p>No movies here yet.<br>Add some from the + tab!</p>
+    </div>
+  </div>
+
+  <!-- ADD SCREEN -->
+  <div id="screen-add" class="screen">
+    <div class="add-screen">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:2px;color:var(--accent)">Add Movies</div>
+      <div class="add-tabs">
+        <button class="add-tab active" onclick="switchAddTab('bulk',this)">Bulk Paste</button>
+        <button class="add-tab" onclick="switchAddTab('single',this)">Single Add</button>
+        <button class="add-tab" onclick="switchAddTab('import',this)">Import XLSX</button>
+      </div>
+
+      <!-- BULK -->
+      <div class="add-panel active" id="panel-bulk">
+        <div>
+          <div class="field-label">Paste your list</div>
+          <textarea class="field-input" id="bulk-input" placeholder="Inception 2010&#10;The Dark Knight&#10;Parasite 2019 - Thriller&#10;Interstellar&#10;(any format, one per line)" rows="8"></textarea>
+        </div>
+        <div class="parse-result" id="parse-result">
+          <div class="parse-status" id="parse-status"></div>
+          <div id="parse-items"></div>
+        </div>
+        <button class="primary-btn" id="parse-btn" onclick="parseBulk()">🤖 &nbsp; Parse & Clean with AI</button>
+        <button class="primary-btn" id="add-parsed-btn" onclick="addParsedMovies()" style="display:none;background:var(--green)">✓ &nbsp; Add All to My List</button>
+      </div>
+
+      <!-- SINGLE -->
+      <div class="add-panel" id="panel-single">
+        <div>
+          <div class="field-label">Movie / Series Name</div>
+          <input class="field-input" id="single-name" type="text" placeholder="e.g. The Godfather">
+        </div>
+        <div style="display:flex;gap:10px">
+          <div style="flex:1">
+            <div class="field-label">Year</div>
+            <input class="field-input" id="single-year" type="text" placeholder="2024">
+          </div>
+          <div style="flex:1">
+            <div class="field-label">Runtime</div>
+            <input class="field-input" id="single-runtime" type="text" placeholder="2h 15m">
+          </div>
+        </div>
+        <div>
+          <div class="field-label">Genre</div>
+          <input class="field-input" id="single-genre" type="text" placeholder="Thriller / Drama">
+        </div>
+        <button class="primary-btn" onclick="addSingleMovie()">Add to List</button>
+      </div>
+
+      <!-- IMPORT -->
+      <div class="add-panel" id="panel-import">
+        <div class="setup-desc">Import your existing Excel/XLSX file. The app will read all movie names, years, genres, and runtimes.</div>
+        <div class="import-zone" onclick="document.getElementById('xlsx-file-input').click()">
+          <div class="import-zone-icon">📂</div>
+          <div class="import-zone-text">Tap to choose your .xlsx file</div>
+        </div>
+        <input type="file" id="xlsx-file-input" accept=".xlsx,.xls,.csv" onchange="importXLSX(this)">
+        <div id="import-status" style="font-size:13px;color:var(--text3);min-height:20px;text-align:center"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATS SCREEN -->
+  <div id="screen-stats" class="screen">
+    <div class="stats-screen">
+      <div class="stats-title">My Stats</div>
+      <div class="stat-grid" id="stat-grid"></div>
+      <div style="font-size:13px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-top:4px">Top Genres</div>
+      <div class="genre-bar-list" id="genre-bars"></div>
+    </div>
+  </div>
+
+  <!-- SETUP SCREEN -->
+  <div id="screen-setup" class="screen">
+    <div class="setup-screen">
+      <div class="setup-title">Settings</div>
+      <div class="setup-step">
+        <div class="step-num">Google Sheets Sync</div>
+        <div class="step-title">Connect Your Spreadsheet</div>
+        <div class="step-desc">
+          Paste your Google Sheets <b>Web App URL</b> below. This lets the app read and write your data from any device.<br><br>
+          <a class="step-link" href="https://docs.google.com/spreadsheets" target="_blank">→ Open Google Sheets</a><br><br>
+          In your sheet: <b>Extensions → Apps Script → Deploy → New Deployment</b> as Web App (execute as: me, access: anyone).
+        </div>
+        <div style="margin-top:12px">
+          <div class="field-label">Web App URL</div>
+          <input class="field-input" id="sheets-url" type="url" placeholder="https://script.google.com/macros/s/..." oninput="validateSheetsURL()">
+          <div class="url-status" id="url-status"></div>
+        </div>
+        <button class="primary-btn" style="margin-top:12px" onclick="saveSettings()">Save Settings</button>
+      </div>
+      <div class="setup-step">
+        <div class="step-num">Local Data</div>
+        <div class="step-title">Export / Clear</div>
+        <div class="step-desc">Your data is also saved locally in this browser.</div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="secondary-btn" onclick="exportCSV()">Export CSV</button>
+          <button class="secondary-btn" style="color:var(--red);border-color:var(--red)" onclick="clearAllData()">Clear All</button>
+        </div>
+      </div>
+      <div class="setup-step">
+        <div class="step-num">About</div>
+        <div class="step-title">CinemaVault v1.0</div>
+        <div class="step-desc">Phone-first cinema tracker. Built for passionate film lovers who collect obsessively and watch on vibes.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- NAV -->
+  <nav class="nav">
+    <button class="nav-item active" onclick="showScreen('browse')">
+      <span class="ni">🎬</span>Browse
+    </button>
+    <button class="nav-item" onclick="showScreen('add')">
+      <span class="ni">＋</span>Add
+    </button>
+    <button class="nav-item" onclick="showScreen('stats');renderStats()">
+      <span class="ni">📊</span>Stats
+    </button>
+  </nav>
+</div>
+
+<!-- MOVIE DETAIL MODAL -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div class="modal-handle"></div>
+    <div class="clearfix">
+      <div class="modal-poster-placeholder" id="modal-poster">🎬</div>
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-year" id="modal-year"></div>
+      <div class="modal-genre" id="modal-genre"></div>
+      <div class="modal-runtime" id="modal-runtime"></div>
+    </div>
+    <div class="modal-divider"></div>
+    <div class="review-section">
+      <div>
+        <div class="review-label">Rating</div>
+        <div class="rating-row" id="rating-row">
+          <div class="rating-btn" onclick="setRating(1,this)">😐</div>
+          <div class="rating-btn" onclick="setRating(2,this)">🙂</div>
+          <div class="rating-btn" onclick="setRating(3,this)">👍</div>
+          <div class="rating-btn" onclick="setRating(4,this)">🔥</div>
+          <div class="rating-btn" onclick="setRating(5,this)">🤌</div>
+        </div>
+      </div>
+      <div class="watched-toggle" onclick="toggleWatched()">
+        <div class="toggle-track" id="modal-toggle"><div class="toggle-thumb"></div></div>
+        <div class="toggle-label" id="modal-toggle-label">Mark as Watched</div>
+      </div>
+      <div id="watched-fields" style="display:none;flex-direction:column;gap:10px">
+        <div>
+          <div class="review-label">Watched On</div>
+          <input class="field-input" id="modal-watched-on" type="date">
+        </div>
+        <div>
+          <div class="review-label">Verdict / Review</div>
+          <textarea class="field-input" id="modal-verdict" placeholder="Your thoughts on this one..." rows="3"></textarea>
+        </div>
+        <div>
+          <div class="review-label">Best Technical Aspects</div>
+          <input class="field-input" id="modal-technical" type="text" placeholder="Cinematography, score, editing...">
+        </div>
+        <div>
+          <div class="review-label">Best Shot Image Link</div>
+          <input class="field-input" id="modal-shot-link" type="url" placeholder="https://...">
+        </div>
+      </div>
+      <button class="save-review-btn" onclick="saveReview()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+// ── STATE ──
+let movies = JSON.parse(localStorage.getItem('cv_movies') || '[]');
+let settings = JSON.parse(localStorage.getItem('cv_settings') || '{}');
+let activeFilter = 'all';
+let activeSort = 'alpha';
+let currentMovieId = null;
+let parsedMoviesBuffer = [];
+let modalRating = 0;
+
+// ── HELPERS ──
+function save() { localStorage.setItem('cv_movies', JSON.stringify(movies)); updateHeaderStats(); }
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+function toast(msg, dur=2200) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), dur);
+}
+function updateHeaderStats() {
+  const w = movies.filter(m=>m.watched).length;
+  document.getElementById('hstat-total').textContent = movies.length;
+  document.getElementById('hstat-watched').textContent = w;
+  document.getElementById('hstat-unwatched').textContent = movies.length - w;
+}
+
+// ── SCREENS ──
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('screen-'+name).classList.add('active');
+  const idx = {browse:0,add:1,stats:2,setup:3}[name];
+  if(idx!==undefined) document.querySelectorAll('.nav-item')[idx]?.classList.add('active');
+  if(name==='browse') renderList();
+}
+
+// ── RENDER LIST ──
+function setFilter(f, el) {
+  activeFilter = f;
+  document.querySelectorAll('[data-filter]').forEach(e=>e.classList.remove('active'));
+  el.classList.add('active');
+  renderList();
+}
+function setSort(s, el) {
+  activeSort = s;
+  document.querySelectorAll('[data-sort]').forEach(e=>e.classList.remove('active'));
+  el.classList.add('active');
+  renderList();
+}
+
+function parseRuntime(r) {
+  if(!r) return 0;
+  const h = (r.match(/(\d+)\s*h/)||[0,0])[1]*60;
+  const m = (r.match(/(\d+)\s*m/)||[0,0])[1];
+  return parseInt(h)+parseInt(m);
+}
+
+function renderList() {
+  const q = (document.getElementById('search-input').value||'').toLowerCase();
+  let list = movies.filter(m => {
+    if(q && !m.title.toLowerCase().includes(q) && !(m.genre||'').toLowerCase().includes(q)) return false;
+    if(activeFilter==='watched') return m.watched;
+    if(activeFilter==='unwatched') return !m.watched;
+    return true;
+  });
+  if(activeSort==='alpha') list.sort((a,b)=>a.title.localeCompare(b.title));
+  else if(activeSort==='year') list.sort((a,b)=>(b.year||'0').localeCompare(a.year||'0'));
+  else if(activeSort==='runtime') list.sort((a,b)=>parseRuntime(b.runtime)-parseRuntime(a.runtime));
+  else if(activeSort==='genre') list.sort((a,b)=>(a.genre||'').localeCompare(b.genre||''));
+
+  const grid = document.getElementById('movies-grid');
+  const empty = document.getElementById('empty-state');
+  document.getElementById('list-count').textContent = list.length + ' titles';
+
+  if(!list.length) { grid.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display='none';
+
+  grid.innerHTML = list.map(m => `
+    <div class="movie-card ${m.watched?'watched':''}" onclick="openModal('${m.id}')">
+      <div class="poster-placeholder">🎬</div>
+      <div class="movie-info">
+        <div class="movie-title">${escHtml(m.title)}</div>
+        <div class="movie-meta">
+          ${m.year?`<span class="meta-pill year">${escHtml(m.year)}</span>`:''}
+          ${m.runtime?`<span class="meta-pill runtime">⏱ ${escHtml(m.runtime)}</span>`:''}
+        </div>
+        <div class="genre-line">${escHtml(m.genre||'')}</div>
+        ${m.verdict?`<div class="verdict-line" style="max-width:100%;margin-top:4px;color:var(--text3);font-size:11px;font-style:italic">"${escHtml(m.verdict.slice(0,60))}${m.verdict.length>60?'…':''}"</div>`:''}
+      </div>
+      <div class="card-actions">
+        <div class="watch-btn ${m.watched?'watched':''}">${m.watched?'✓':'▷'}</div>
+        ${m.rating?`<div style="font-size:16px">${['','😐','🙂','👍','🔥','🤌'][m.rating]||''}</div>`:''}
+      </div>
+    </div>
+  `).join('');
+}
+function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── MODAL ──
+function openModal(id) {
+  currentMovieId = id;
+  const m = movies.find(x=>x.id===id);
+  if(!m) return;
+  modalRating = m.rating||0;
+  document.getElementById('modal-title').textContent = m.title;
+  document.getElementById('modal-year').textContent = m.year||'';
+  document.getElementById('modal-genre').textContent = m.genre||'';
+  document.getElementById('modal-runtime').textContent = m.runtime ? '⏱ '+m.runtime : '';
+  const toggle = document.getElementById('modal-toggle');
+  const label = document.getElementById('modal-toggle-label');
+  const wf = document.getElementById('watched-fields');
+  if(m.watched){ toggle.classList.add('on'); label.textContent='Watched ✓'; wf.style.display='flex'; }
+  else { toggle.classList.remove('on'); label.textContent='Mark as Watched'; wf.style.display='none'; }
+  document.getElementById('modal-watched-on').value = m.watchedOn||'';
+  document.getElementById('modal-verdict').value = m.verdict||'';
+  document.getElementById('modal-technical').value = m.technical||'';
+  document.getElementById('modal-shot-link').value = m.shotLink||'';
+  document.querySelectorAll('.rating-btn').forEach((b,i)=>{ b.classList.toggle('selected', i+1===modalRating); });
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function closeModal(e) {
+  if(e.target===document.getElementById('modal-overlay')) document.getElementById('modal-overlay').classList.remove('open');
+}
+function toggleWatched() {
+  const toggle = document.getElementById('modal-toggle');
+  const label = document.getElementById('modal-toggle-label');
+  const wf = document.getElementById('watched-fields');
+  const on = toggle.classList.toggle('on');
+  label.textContent = on ? 'Watched ✓' : 'Mark as Watched';
+  wf.style.display = on ? 'flex' : 'none';
+  if(on && !document.getElementById('modal-watched-on').value){
+    document.getElementById('modal-watched-on').value = new Date().toISOString().split('T')[0];
+  }
+}
+function setRating(n, el) {
+  modalRating = n;
+  document.querySelectorAll('.rating-btn').forEach((b,i)=>b.classList.toggle('selected',i+1===n));
+}
+function saveReview() {
+  const m = movies.find(x=>x.id===currentMovieId);
+  if(!m) return;
+  m.watched = document.getElementById('modal-toggle').classList.contains('on');
+  m.watchedOn = document.getElementById('modal-watched-on').value;
+  m.verdict = document.getElementById('modal-verdict').value;
+  m.technical = document.getElementById('modal-technical').value;
+  m.shotLink = document.getElementById('modal-shot-link').value;
+  m.rating = modalRating;
+  save(); renderList();
+  document.getElementById('modal-overlay').classList.remove('open');
+  toast('✓ Saved!');
+  syncToSheets(m);
+}
+
+// ── ADD SINGLE ──
+function addSingleMovie() {
+  const name = document.getElementById('single-name').value.trim();
+  if(!name) { toast('Enter a movie name'); return; }
+  const existing = movies.find(m=>m.title.toLowerCase()===name.toLowerCase());
+  if(existing) { toast('Already in your list!'); return; }
+  movies.unshift({
+    id: uid(), title: name,
+    year: document.getElementById('single-year').value.trim(),
+    runtime: document.getElementById('single-runtime').value.trim(),
+    genre: document.getElementById('single-genre').value.trim(),
+    watched: false
+  });
+  save();
+  ['single-name','single-year','single-runtime','single-genre'].forEach(id=>{ document.getElementById(id).value=''; });
+  toast('✓ Added: '+name);
+}
+
+// ── BULK PARSE ──
+async function parseBulk() {
+  const raw = document.getElementById('bulk-input').value.trim();
+  if(!raw) { toast('Paste some movie names first'); return; }
+  const btn = document.getElementById('parse-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:10px"><div class="spinner"></div> Parsing with AI…</div>';
+  document.getElementById('parse-result').style.display='none';
+
+  const systemPrompt = `You are a movie data parser. Given a raw list of movie/series names (possibly with year, genre, or other info mixed in), extract and structure each entry.
+
+Return ONLY a JSON array, no markdown, no explanation. Each item: {"title":"...","year":"...","genre":"...","runtime":""}
+- title: clean movie/series name only
+- year: 4-digit year if present, else ""
+- genre: genre if mentioned, else ""
+- runtime: "" (leave blank, user fills later)
+Remove duplicates. Ignore blank lines.`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:4000,
+        system: systemPrompt,
+        messages:[{role:'user',content:raw}]
+      })
+    });
+    const data = await resp.json();
+    const text = data.content?.[0]?.text||'';
+    const clean = text.replace(/```json|```/g,'').trim();
+    parsedMoviesBuffer = JSON.parse(clean);
+
+    const existing = new Set(movies.map(m=>m.title.toLowerCase()));
+    const newOnes = parsedMoviesBuffer.filter(p=>!existing.has(p.title.toLowerCase()));
+    const dups = parsedMoviesBuffer.length - newOnes.length;
+
+    document.getElementById('parse-status').textContent =
+      `Found ${parsedMoviesBuffer.length} entries · ${newOnes.length} new · ${dups} already in list`;
+    document.getElementById('parse-items').innerHTML = newOnes.slice(0,12).map(p=>`
+      <div class="parse-item">
+        <span class="parse-item-name">${escHtml(p.title)}</span>
+        <span class="parse-item-meta">${[p.year,p.genre].filter(Boolean).join(' · ') || '—'}</span>
+      </div>
+    `).join('') + (newOnes.length>12?`<div class="parse-status" style="text-align:center;margin-top:6px">+${newOnes.length-12} more…</div>`:'');
+    document.getElementById('parse-result').style.display='flex';
+    document.getElementById('add-parsed-btn').style.display = newOnes.length>0 ? 'block' : 'none';
+    document.getElementById('add-parsed-btn').textContent = `✓  Add ${newOnes.length} movies to My List`;
+  } catch(e) {
+    toast('Parse error — check connection');
+    console.error(e);
+  }
+  btn.disabled=false;
+  btn.innerHTML='🤖 &nbsp; Parse & Clean with AI';
+}
+
+function addParsedMovies() {
+  const existing = new Set(movies.map(m=>m.title.toLowerCase()));
+  let added=0;
+  parsedMoviesBuffer.forEach(p=>{
+    if(!existing.has(p.title.toLowerCase())){
+      movies.unshift({id:uid(),title:p.title,year:p.year||'',genre:p.genre||'',runtime:p.runtime||'',watched:false});
+      existing.add(p.title.toLowerCase());
+      added++;
+    }
+  });
+  save();
+  document.getElementById('add-parsed-btn').style.display='none';
+  document.getElementById('bulk-input').value='';
+  document.getElementById('parse-result').style.display='none';
+  parsedMoviesBuffer=[];
+  toast(`✓ Added ${added} movies!`);
+  showScreen('browse');
+}
+
+// ── XLSX IMPORT ──
+function importXLSX(input) {
+  const file = input.files[0];
+  if(!file) return;
+  const status = document.getElementById('import-status');
+  status.textContent = 'Reading file…';
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      let added=0, skipped=0;
+      const existing = new Set(movies.map(m=>m.title.toLowerCase()));
+      wb.SheetNames.forEach(sn=>{
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], {header:1, defval:''});
+        rows.forEach((row,i)=>{
+          if(i===0) return;
+          const title = String(row[0]||'').trim();
+          if(!title || title.toLowerCase().includes('movie') && i<3) return;
+          if(existing.has(title.toLowerCase())){ skipped++; return; }
+          movies.unshift({
+            id:uid(), title,
+            year: String(row[1]||'').trim(),
+            genre: String(row[2]||'').trim(),
+            runtime: String(row[3]||'').trim(),
+            watchedOn: String(row[4]||'').trim(),
+            verdict: String(row[5]||'').trim(),
+            technical: String(row[6]||'').trim(),
+            shotLink: String(row[7]||'').trim(),
+            watched: !!(row[4]||row[5])
+          });
+          existing.add(title.toLowerCase());
+          added++;
+        });
+      });
+      save();
+      status.textContent = `✓ Imported ${added} movies (${skipped} duplicates skipped)`;
+      toast(`✓ ${added} movies imported!`);
+    } catch(err) {
+      status.textContent = 'Error reading file. Make sure it\'s a valid .xlsx';
+      console.error(err);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── STATS ──
+function renderStats() {
+  const watched = movies.filter(m=>m.watched);
+  const rated = movies.filter(m=>m.rating);
+  const avgRating = rated.length ? (rated.reduce((a,m)=>a+m.rating,0)/rated.length).toFixed(1) : '—';
+  const genreMap = {};
+  movies.forEach(m=>{ if(m.genre){ m.genre.split(/[\/,]/).forEach(g=>{ const k=g.trim(); if(k) genreMap[k]=(genreMap[k]||0)+1; }); } });
+  const topGenres = Object.entries(genreMap).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const maxG = topGenres[0]?.[1]||1;
+
+  document.getElementById('stat-grid').innerHTML = [
+    ['Total Titles', movies.length, '#e8c547'],
+    ['Watched', watched.length, '#4ecca3'],
+    ['To Watch', movies.length-watched.length, '#ff6b35'],
+    ['Avg Rating', avgRating, '#ff6b35'],
+  ].map(([l,v,c])=>`
+    <div class="stat-card">
+      <div class="stat-card-num" style="color:${c}">${v}</div>
+      <div class="stat-card-label">${l}</div>
+    </div>
+  `).join('');
+
+  document.getElementById('genre-bars').innerHTML = topGenres.map(([g,c])=>`
+    <div class="genre-bar-item">
+      <div class="genre-bar-top"><span class="genre-bar-name">${escHtml(g)}</span><span class="genre-bar-count">${c}</span></div>
+      <div class="genre-bar-track"><div class="genre-bar-fill" style="width:${Math.round(c/maxG*100)}%"></div></div>
+    </div>
+  `).join('');
+}
+
+// ── SHUFFLE ──
+function shufflePick() {
+  const pool = movies.filter(m=>!m.watched);
+  if(!pool.length){ toast('All movies watched! 🎉'); return; }
+  const pick = pool[Math.floor(Math.random()*pool.length)];
+  toast('🎲 How about: '+pick.title);
+  showScreen('browse');
+  setTimeout(()=>{
+    activeFilter='all';
+    document.querySelectorAll('[data-filter]').forEach(e=>e.classList.remove('active'));
+    document.querySelector('[data-filter="all"]').classList.add('active');
+    document.getElementById('search-input').value = pick.title;
+    renderList();
+    setTimeout(()=>openModal(pick.id), 400);
+  }, 200);
+}
+
+// ── SETTINGS ──
+function validateSheetsURL() {
+  const url = document.getElementById('sheets-url').value;
+  const el = document.getElementById('url-status');
+  if(!url){ el.textContent=''; return; }
+  if(url.includes('script.google.com/macros/s/')){ el.className='url-status ok'; el.textContent='✓ Looks good!'; }
+  else { el.className='url-status err'; el.textContent='Should be a Google Apps Script web app URL'; }
+}
+function saveSettings() {
+  settings.sheetsURL = document.getElementById('sheets-url').value;
+  localStorage.setItem('cv_settings', JSON.stringify(settings));
+  toast('✓ Settings saved');
+}
+async function syncToSheets(movie) {
+  if(!settings.sheetsURL) return;
+  try {
+    await fetch(settings.sheetsURL, {
+      method:'POST', mode:'no-cors',
+      body: JSON.stringify({action:'update', movie})
+    });
+  } catch(e) {}
+}
+function exportCSV() {
+  const header = ['Title','Year','Genre','Runtime','Watched','Watched On','Verdict','Best Technical','Best Shot Link','Rating'];
+  const rows = movies.map(m=>[m.title,m.year,m.genre,m.runtime,m.watched?'Yes':'No',m.watchedOn||'',m.verdict||'',m.technical||'',m.shotLink||'',m.rating||''].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
+  const csv = [header.join(','),...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download = 'CinemaVault_Export.csv';
+  a.click();
+  toast('✓ CSV exported');
+}
+function clearAllData() {
+  if(!confirm('Delete ALL movies from CinemaVault? This cannot be undone.')) return;
+  movies=[];
+  localStorage.removeItem('cv_movies');
+  updateHeaderStats(); renderList();
+  toast('All data cleared');
+}
+
+// ── ADD TABS ──
+function switchAddTab(name, el) {
+  document.querySelectorAll('.add-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.add-panel').forEach(p=>p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('panel-'+name).classList.add('active');
+}
+
+// ── LOAD SETTINGS ──
+if(settings.sheetsURL) document.getElementById('sheets-url').value = settings.sheetsURL;
+
+// ── INIT ──
+updateHeaderStats();
+renderList();
+setTimeout(()=>{ document.getElementById('splash').style.display='none'; }, 2200);
+</script>
+</body>
+</html>
