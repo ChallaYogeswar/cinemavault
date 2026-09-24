@@ -39,8 +39,20 @@
     });
   }
 
+  function clear() {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        transaction.objectStore(STORE_NAME).delete(CACHE_KEY);
+        transaction.oncomplete = resolve;
+        transaction.onerror = function () { reject(transaction.error); };
+      });
+    });
+  }
+
   window.CinemaVaultCache = {
     getCachedMovies: getCachedMovies,
-    setCachedMovies: setCachedMovies
+    setCachedMovies: setCachedMovies,
+    clear: clear
   };
 }());
