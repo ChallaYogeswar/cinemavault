@@ -68,7 +68,7 @@ create table if not exists public.movie_metadata (
   metadata_updated_at timestamptz not null default now()
 );
 
-create unique index if not exists movie_metadata_tmdb_identity_idx
+create index if not exists movie_metadata_tmdb_identity_idx
   on public.movie_metadata (tmdb_id, tmdb_media_type)
   where tmdb_id is not null and tmdb_media_type is not null;
 
@@ -115,6 +115,10 @@ execute function public.set_updated_at();
 alter table public.movies enable row level security;
 alter table public.movie_metadata enable row level security;
 alter table public.sync_state enable row level security;
+
+-- Keep Data API access least-privilege. RLS policies alone do not remove table grants.
+revoke all on table public.movies, public.movie_metadata, public.sync_state from anon;
+grant select, insert, update, delete on table public.movies, public.movie_metadata, public.sync_state to authenticated;
 
 drop policy if exists "movies_select_own" on public.movies;
 create policy "movies_select_own"
