@@ -1,0 +1,4 @@
+-- CinemaVault development seed.
+-- Intentionally contains no user/movie records because owner_id references auth.users.
+-- Create a test user through Supabase Auth, then insert test rows with that user's UUID
+-- in a local development environment if required.
