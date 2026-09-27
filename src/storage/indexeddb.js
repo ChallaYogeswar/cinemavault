@@ -20,36 +20,38 @@
 
     request.onupgradeneeded = (event) => {
       const db = request.result;
-      upgrade(db, event.oldVersion, event.newVersion);
+      upgrade(db, event.oldVersion, event.newVersion, request.transaction);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('Failed to open CinemaVault IndexedDB'));
     request.onblocked = () => reject(new Error('CinemaVault IndexedDB upgrade is blocked by another open connection'));
   });
 
-  function ensureStore(db, name, options) {
-    return db.objectStoreNames.contains(name) ? db.transaction(name, 'readwrite').objectStore(name) : db.createObjectStore(name, options);
+  function ensureStore(db, transaction, name, options) {
+    return db.objectStoreNames.contains(name)
+      ? transaction.objectStore(name)
+      : db.createObjectStore(name, options);
   }
 
-  function createSchema(db) {
-    const movies = ensureStore(db, STORES.MOVIES, { keyPath: 'id' });
+  function createSchema(db, oldVersion, newVersion, transaction) {
+    const movies = ensureStore(db, transaction, STORES.MOVIES, { keyPath: 'id' });
     if (!movies.indexNames.contains('normalized_title')) movies.createIndex('normalized_title', 'normalized_title', { unique: false });
     if (!movies.indexNames.contains('updatedAt')) movies.createIndex('updatedAt', 'updatedAt', { unique: false });
     if (!movies.indexNames.contains('media_type')) movies.createIndex('media_type', 'media_type', { unique: false });
     if (!movies.indexNames.contains('watched')) movies.createIndex('watched', 'watched', { unique: false });
 
-    const metadata = ensureStore(db, STORES.METADATA, { keyPath: 'movieId' });
+    const metadata = ensureStore(db, transaction, STORES.METADATA, { keyPath: 'movieId' });
     if (!metadata.indexNames.contains('tmdbId')) metadata.createIndex('tmdbId', 'tmdbId', { unique: false });
     if (!metadata.indexNames.contains('cachedAt')) metadata.createIndex('cachedAt', 'cachedAt', { unique: false });
 
-    const pending = ensureStore(db, STORES.PENDING, { keyPath: 'id', autoIncrement: true });
+    const pending = ensureStore(db, transaction, STORES.PENDING, { keyPath: 'id', autoIncrement: true });
     if (!pending.indexNames.contains('status')) pending.createIndex('status', 'status', { unique: false });
     if (!pending.indexNames.contains('createdAt')) pending.createIndex('createdAt', 'createdAt', { unique: false });
     if (!pending.indexNames.contains('entity')) pending.createIndex('entity', 'entity', { unique: false });
     if (!pending.indexNames.contains('entityId')) pending.createIndex('entityId', 'entityId', { unique: false });
 
-    ensureStore(db, STORES.SETTINGS, { keyPath: 'key' });
-    ensureStore(db, STORES.SYNC, { keyPath: 'id' });
+    ensureStore(db, transaction, STORES.SETTINGS, { keyPath: 'key' });
+    ensureStore(db, transaction, STORES.SYNC, { keyPath: 'id' });
   }
 
   async function open() {
