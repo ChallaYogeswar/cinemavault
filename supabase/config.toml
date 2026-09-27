@@ -1,0 +1,11 @@
+# Minimal Supabase CLI configuration for CinemaVault.
+# This file intentionally contains no project credentials or secrets.
+#
+# Set db.major_version only after checking the target project's PostgreSQL
+# version (SHOW server_version;). The local and remote major versions must match.
+
+project_id = "cinemavault"
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
