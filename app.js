@@ -20,7 +20,8 @@
     selectedRating: 0,
     metadata: new Map(),
     recommendation: null,
-    migrated: false
+    migrated: false,
+    libraryVisible: 60
   };
 
   function toast(message, duration = 2800) {
@@ -159,12 +160,11 @@
       '</div></article>';
   }
 
-  async function enrichCards(root = document) {
-    const cards = $$('.movie-card[data-movie]', root);
-    await Promise.all(cards.map(async card => {
-      const movie = state.movies.find(x => x.id === card.dataset.movie);
-      if (!movie) return;
-      const meta = await metadataFor(movie);
+  function loadCardPoster(card) {
+    const movie = state.movies.find(x => x.id === card.dataset.movie);
+    if (!movie || card.dataset.posterLoading === '1') return;
+    card.dataset.posterLoading = '1';
+    metadataFor(movie).then(meta => {
       const frame = $('.poster-frame', card);
       if (!frame || !meta?.poster) return;
       const img = document.createElement('img');
@@ -177,7 +177,30 @@
         frame.insertAdjacentHTML('beforeend', '<span class="poster-shade"></span>' + (movie.watched ? '<span class="watched-badge">✓</span>' : ''));
         requestAnimationFrame(() => frame.classList.add('loaded'));
       };
-    }));
+    }).catch(() => {});
+  }
+
+  function enrichCards(root = document) {
+    const cards = $('.movie-card[data-movie]', root);
+    const observer = 'IntersectionObserver' in window
+      ? new IntersectionObserver(entries => entries.forEach(entry => {
+          if (!entry.isIntersecting) return;
+          loadCardPoster(entry.target);
+          observer.unobserve(entry.target);
+        }), { rootMargin: '500px 0px' })
+      : null;
+
+    cards.forEach(card => {
+      const movie = state.movies.find(x => x.id === card.dataset.movie);
+      const cached = movie ? state.metadata.get(movie.id) : null;
+      if (cached?.poster) {
+        const frame = $('.poster-frame', card);
+        frame.innerHTML = '<img loading="lazy" decoding="async" src="' + esc(cached.poster) + '" alt="' + esc(movie.title) + ' poster"><span class="poster-shade"></span>' + (movie.watched ? '<span class="watched-badge">✓</span>' : '');
+        return;
+      }
+      if (observer) observer.observe(card);
+      else loadCardPoster(card);
+    });
   }
 
   function shell(content) {
@@ -229,7 +252,7 @@
       '<span class="genre-number">' + String(row.count).padStart(3,'0') + '</span><span class="genre-name">' + esc(row.genre) + '</span><span class="genre-arrow">↗</span></button>';
   }
 
-  function libraryPage() {
+  function getLibraryList() {
     let list = state.movies.filter(m => !m.deletedAt);
     if (state.filter === 'watched') list = list.filter(m => m.watched);
     if (state.filter === 'unwatched') list = list.filter(m => !m.watched);
@@ -244,11 +267,20 @@
       if (state.sort === 'recent') return String(b.updatedAt).localeCompare(String(a.updatedAt));
       return String(a.title).localeCompare(String(b.title));
     });
+    return list;
+  }
+
+  function libraryPage() {
+    const list = getLibraryList();
+    const visible = list.slice(0, state.libraryVisible);
+    const hasMore = visible.length < list.length;
     return '<section class="page-head cinematic-enter"><div><p class="eyebrow">THE VAULT</p><h1>Your cinema.</h1><p>' + list.length + ' titles in this view.</p></div><button class="primary-button" data-route="add">+ Add to vault</button></section>' +
       '<section class="library-toolbar"><label class="search-box"><span>⌕</span><input id="library-search" value="' + esc(state.query) + '" placeholder="Search your cinema..." autocomplete="off"></label><div class="filter-group">' +
       ['all','unwatched','watched'].map(f => '<button class="filter-button ' + (state.filter===f?'active':'') + '" data-filter="' + f + '">' + (f==='all'?'All':f[0].toUpperCase()+f.slice(1)) + '</button>').join('') +
       '</div><select id="library-sort" class="select-control"><option value="title"' + (state.sort==='title'?' selected':'') + '>A–Z</option><option value="year"' + (state.sort==='year'?' selected':'') + '>Year</option><option value="rating"' + (state.sort==='rating'?' selected':'') + '>Rating</option><option value="genre"' + (state.sort==='genre'?' selected':'') + '>Genre</option><option value="recent"' + (state.sort==='recent'?' selected':'') + '>Recently changed</option></select></section>' +
-      (list.length ? '<section class="library-grid">' + list.map(movieCard).join('') + '</section>' : '<section class="empty-state"><span>✦</span><h2>No films here.</h2><p>Change the filter or add something new to your vault.</p><button class="primary-button" data-route="add">Add a film</button></section>');
+      (list.length ? '<section class="library-grid">' + visible.map(movieCard).join('') + '</section>' +
+        (hasMore ? '<div class="load-more-wrap"><button class="ghost-button" data-action="load-more">Load more · ' + Math.min(60, list.length-visible.length) + ' next</button><p>Showing ' + visible.length + ' of ' + list.length + '</p></div>' : '<div class="load-more-wrap"><p>Showing all ' + list.length + ' titles</p></div>')
+        : '<section class="empty-state"><span>✦</span><h2>No films here.</h2><p>Change the filter or add something new to your vault.</p><button class="primary-button" data-route="add">Add a film</button></section>');
   }
 
   function genresPage() {
@@ -608,9 +640,10 @@
     $$('[data-route]').forEach(el=>el.addEventListener('click',()=>route(el.dataset.route)));
     $$('[data-movie]').forEach(el=>el.addEventListener('click',()=>openMovie(el.dataset.movie)));
     $$('[data-genre]').forEach(el=>el.addEventListener('click',()=>{state.genre=el.dataset.genre;state.route='genres';render();}));
-    $$('[data-filter]').forEach(el=>el.addEventListener('click',()=>{state.filter=el.dataset.filter;render();}));
-    $('#library-search')?.addEventListener('input',e=>{state.query=e.target.value;render();});
-    $('#library-sort')?.addEventListener('change',e=>{state.sort=e.target.value;render();});
+    $('[data-filter]').forEach(el=>el.addEventListener('click',()=>{state.filter=el.dataset.filter;state.libraryVisible=60;render();}));
+    $('#library-sort')?.addEventListener('change',e=>{state.sort=e.target.value;state.libraryVisible=60;render();});
+    $('#library-search')?.addEventListener('input',e=>{state.query=e.target.value;state.libraryVisible=60;clearTimeout(state._searchTimer);state._searchTimer=setTimeout(render,180);});
+    $('[data-action="load-more"]').forEach(el=>el.addEventListener('click',()=>{state.libraryVisible+=60;render();}));
     $('#genre-sort')?.addEventListener('change',e=>{state.sort=e.target.value;render();});
     $('#single-form')?.addEventListener('submit',e=>{e.preventDefault();addSingle();});
     $$('[data-action="parse-bulk"]').forEach(el=>el.addEventListener('click',parseBulk));
