@@ -671,7 +671,10 @@
   }
 
   boot().catch(error=>{
-    console.error(error);
-    $('#app').innerHTML='<main class="fatal"><h1>CinemaVault could not open.</h1><p>'+esc(error.message)+'</p><button class="primary-button" onclick="location.reload()">Reload</button></main>';
+    console.error('[CinemaVault boot]', error);
+    const app = $('#app');
+    if (app) {
+      app.innerHTML='<main class="fatal"><p class="eyebrow">CINEMAVAULT STARTUP ERROR</p><h1>CinemaVault could not open.</h1><p>'+esc(error?.message || String(error))+'</p><button class="primary-button" onclick="location.reload()">Reload</button></main>';
+    }
   });
 })();
