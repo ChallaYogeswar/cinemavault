@@ -181,7 +181,7 @@
   }
 
   function enrichCards(root = document) {
-    const cards = $('.movie-card[data-movie]', root);
+    const cards = $$('.movie-card[data-movie]', root);
     const observer = 'IntersectionObserver' in window
       ? new IntersectionObserver(entries => entries.forEach(entry => {
           if (!entry.isIntersecting) return;
