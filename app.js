@@ -640,10 +640,10 @@
     $$('[data-route]').forEach(el=>el.addEventListener('click',()=>route(el.dataset.route)));
     $$('[data-movie]').forEach(el=>el.addEventListener('click',()=>openMovie(el.dataset.movie)));
     $$('[data-genre]').forEach(el=>el.addEventListener('click',()=>{state.genre=el.dataset.genre;state.route='genres';render();}));
-    $('[data-filter]').forEach(el=>el.addEventListener('click',()=>{state.filter=el.dataset.filter;state.libraryVisible=60;render();}));
+    $$('[data-filter]').forEach(el=>el.addEventListener('click',()=>{state.filter=el.dataset.filter;state.libraryVisible=60;render();}));
     $('#library-sort')?.addEventListener('change',e=>{state.sort=e.target.value;state.libraryVisible=60;render();});
     $('#library-search')?.addEventListener('input',e=>{state.query=e.target.value;state.libraryVisible=60;clearTimeout(state._searchTimer);state._searchTimer=setTimeout(render,180);});
-    $('[data-action="load-more"]').forEach(el=>el.addEventListener('click',()=>{state.libraryVisible+=60;render();}));
+    $$('[data-action="load-more"]').forEach(el=>el.addEventListener('click',()=>{state.libraryVisible+=60;render();}));
     $('#genre-sort')?.addEventListener('change',e=>{state.sort=e.target.value;render();});
     $('#single-form')?.addEventListener('submit',e=>{e.preventDefault();addSingle();});
     $$('[data-action="parse-bulk"]').forEach(el=>el.addEventListener('click',parseBulk));
