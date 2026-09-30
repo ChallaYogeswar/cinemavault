@@ -139,7 +139,7 @@
       tmdbRating: remote.voteAverage || null,
       trailer: remote.trailerKey || null
     };
-    await CinemaVaultMetadataRepository.save(movie.id, data);
+    await CinemaVaultLocalFirstRepository.saveMetadata(movie.id, data);
     state.metadata.set(movie.id, data);
     return data;
   }
@@ -329,8 +329,14 @@
   }
 
   function settingsPage() {
-    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>PR5 is local-first. Supabase sync arrives in the next integration phase.</p></div></section>' +
-      '<section class="settings-grid"><div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>Your current library lives in IndexedDB on this browser. Changes are recorded locally before any future remote synchronization.</p><span class="status-pill local">Local-first</span></div><div class="settings-panel"><span class="settings-icon">↗</span><h2>Sync queue</h2><p id="queue-status">Checking pending changes…</p><span class="status-pill pending">Ready for sync engine</span></div><div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops and metadata are fetched only when needed and cached locally.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div><div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local library</h2><p>This removes the CinemaVault local database from this browser.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div></section>';
+    const supa = window.CinemaVaultSupabase?.config?.() || {url:'',key:''};
+    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>Local-first storage remains the primary experience. Supabase is an optional synchronization layer.</p></div></section>' +
+      '<section class="settings-grid">' +
+      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>Your library lives in IndexedDB on this browser. Every local mutation is saved before synchronization.</p><span class="status-pill local">Local-first</span></div>' +
+      '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Cloud sync</h2><p id="sync-status">Checking Supabase connection…</p><div class="form-stack compact"><label>Supabase project URL<input id="supabase-url" value="' + esc(supa.url) + '" placeholder="https://your-project.supabase.co"></label><label>Publishable key<input id="supabase-key" type="password" value="' + esc(supa.key) + '" placeholder="sb_publishable_…"></label><button class="ghost-button" data-action="save-supabase">Save connection</button></div><div class="sync-auth"><label>Email<input id="supabase-email" type="email" autocomplete="email" placeholder="you@example.com"></label><label>Password<input id="supabase-password" type="password" autocomplete="current-password" placeholder="••••••••"></label><div class="panel-actions"><button class="primary-button" data-action="supabase-signin">Sign in</button><button class="ghost-button" data-action="supabase-signup">Create account</button><button class="ghost-button" data-action="supabase-sync">Sync now</button></div></div><span class="status-pill pending">RLS protected</span></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops and metadata are fetched only when needed and cached locally. Cached metadata can sync with your movie record.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div>' +
+      '<div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local library</h2><p>This removes the CinemaVault local database from this browser.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div>' +
+      '</section>';
   }
 
   function render() {
@@ -347,7 +353,7 @@
     reveal();
     if (state.route === 'home') renderHomeRecommendation();
     if (state.route === 'discover') { renderDiscoverRecommendation(); renderHistory(); }
-    if (state.route === 'settings') updateQueueStatus();
+    if (state.route === 'settings') { updateQueueStatus(); updateSyncStatus(); }
     enrichCards();
     preloadHero();
   }
@@ -502,24 +508,29 @@
   }
 
   async function addSingle() {
-    const title = $('#add-title').value.trim();
-    if (!title) return;
-    const existing = await CinemaVaultMovieRepository.findDuplicate({title, media_type:$('#add-type').value, year:$('#add-year').value});
-    if (existing) { toast('That title is already in the vault.'); return; }
-    const movie = await CinemaVaultLocalFirstRepository.saveMovie({
-      id: uid(),
-      title,
-      year: $('#add-year').value || null,
-      media_type: $('#add-type').value,
-      genre: $('#add-genre').value.trim(),
-      runtime_minutes: runtimeMinutes($('#add-runtime').value) || null,
-      watched: false
-    });
-    state.movies.unshift(movie);
-    toast('✓ Added to your vault.');
-    state.route = 'library';
-    state.filter = 'unwatched';
-    render();
+    try {
+      const title = $('#add-title').value.trim();
+      if (!title) return;
+      const existing = await CinemaVaultMovieRepository.findDuplicate({title, media_type:$('#add-type').value, year:$('#add-year').value});
+      if (existing) { toast('That title is already in the vault.'); return; }
+      const movie = await CinemaVaultLocalFirstRepository.saveMovie({
+        id: uid(),
+        title,
+        year: $('#add-year').value || null,
+        media_type: $('#add-type').value,
+        genre: $('#add-genre').value.trim(),
+        runtime_minutes: runtimeMinutes($('#add-runtime').value) || null,
+        watched: false
+      });
+      state.movies.unshift(movie);
+      toast('✓ Added to your vault.');
+      state.route = 'library';
+      state.filter = 'unwatched';
+      render();
+    } catch (error) {
+      console.error('[CinemaVault addSingle]', error);
+      toast('Could not add title: ' + (error?.message || 'unknown error'));
+    }
   }
 
   function parseBulkText(text) {
@@ -554,14 +565,19 @@
   }
 
   async function addParsed() {
-    let items = [];
-    try { items = JSON.parse($('#bulk-preview').dataset.items || '[]'); } catch (_) {}
-    if (!items.length) return;
-    for (const item of items) await CinemaVaultLocalFirstRepository.saveMovie(item);
-    await loadMovies();
-    toast('✓ ' + items.length + ' titles added.');
-    state.route='library';
-    render();
+    try {
+      let items = [];
+      try { items = JSON.parse($('#bulk-preview').dataset.items || '[]'); } catch (_) {}
+      if (!items.length) return;
+      for (const item of items) await CinemaVaultLocalFirstRepository.saveMovie(item);
+      await loadMovies();
+      toast('✓ ' + items.length + ' titles added.');
+      state.route='library';
+      render();
+    } catch (error) {
+      console.error('[CinemaVault addParsed]', error);
+      toast('Could not add titles: ' + (error?.message || 'unknown error'));
+    }
   }
 
   async function genreRandom() {
@@ -575,6 +591,62 @@
     const failed = await CinemaVaultSyncQueue.list('failed');
     const el = $('#queue-status');
     if (el) el.textContent = pending.length + ' pending local change' + (pending.length===1?'':'s') + (failed.length ? ' · ' + failed.length + ' failed waiting for retry' : '') + '.';
+  }
+
+  async function updateSyncStatus() {
+    const el = $('#sync-status');
+    if (!el) return;
+    if (!window.CinemaVaultSupabase?.configured?.()) {
+      el.textContent = 'Not configured — CinemaVault is running fully locally.';
+      return;
+    }
+    try {
+      const session = await window.CinemaVaultSupabase.session();
+      el.textContent = session?.user ? 'Connected as ' + (session.user.email || session.user.id) + '.' : 'Connected to Supabase, but no user is signed in.';
+    } catch (error) {
+      el.textContent = 'Supabase connection error: ' + error.message;
+    }
+  }
+
+  async function saveSupabase() {
+    try {
+      window.CinemaVaultSupabase.saveConfig($('#supabase-url').value, $('#supabase-key').value);
+      await updateSyncStatus();
+      toast('Supabase connection saved locally.');
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function supabaseAuth(action) {
+    try {
+      if (!window.CinemaVaultSupabase.configured()) throw new Error('Save the Supabase connection first.');
+      const email = $('#supabase-email').value.trim();
+      const password = $('#supabase-password').value;
+      if (!email || !password) throw new Error('Email and password are required.');
+      const result = action === 'signup'
+        ? await window.CinemaVaultSupabase.signUp(email, password)
+        : await window.CinemaVaultSupabase.signIn(email, password);
+      if (result.session) toast(action === 'signup' ? 'Account created and signed in.' : 'Signed in.');
+      else toast('Account created. Check your email if confirmation is enabled.');
+      await updateSyncStatus();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function runSupabaseSync() {
+    toast('Synchronizing local changes…');
+    const result = await window.CinemaVaultSyncEngine.syncSafe();
+    if (result.status === 'synced') {
+      await loadMovies();
+      render();
+      toast('✓ Local vault synchronized.');
+    } else if (result.status === 'not-configured') {
+      toast('Configure Supabase first.');
+    } else {
+      toast('Sync failed: ' + (result.error?.message || 'unknown error'));
+    }
   }
 
   function saveKey() {
@@ -651,7 +723,11 @@
     $$('[data-action="genre-random"]').forEach(el=>el.addEventListener('click',genreRandom));
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
-    $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
+    $('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
+    $('[data-action="save-supabase"]').forEach(el=>el.addEventListener('click',saveSupabase));
+    $('[data-action="supabase-signin"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signin')));
+    $('[data-action="supabase-signup"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signup')));
+    $('[data-action="supabase-sync"]').forEach(el=>el.addEventListener('click',runSupabaseSync));
     $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
@@ -668,6 +744,7 @@
     render();
     window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
     window.addEventListener('scroll',()=>document.body.classList.toggle('scrolled',window.scrollY>28),{passive:true});
+    if (window.CinemaVaultSyncEngine) window.CinemaVaultSyncEngine.start();
   }
 
   boot().catch(error=>{
