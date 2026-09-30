@@ -508,24 +508,29 @@
   }
 
   async function addSingle() {
-    const title = $('#add-title').value.trim();
-    if (!title) return;
-    const existing = await CinemaVaultMovieRepository.findDuplicate({title, media_type:$('#add-type').value, year:$('#add-year').value});
-    if (existing) { toast('That title is already in the vault.'); return; }
-    const movie = await CinemaVaultLocalFirstRepository.saveMovie({
-      id: uid(),
-      title,
-      year: $('#add-year').value || null,
-      media_type: $('#add-type').value,
-      genre: $('#add-genre').value.trim(),
-      runtime_minutes: runtimeMinutes($('#add-runtime').value) || null,
-      watched: false
-    });
-    state.movies.unshift(movie);
-    toast('✓ Added to your vault.');
-    state.route = 'library';
-    state.filter = 'unwatched';
-    render();
+    try {
+      const title = $('#add-title').value.trim();
+      if (!title) return;
+      const existing = await CinemaVaultMovieRepository.findDuplicate({title, media_type:$('#add-type').value, year:$('#add-year').value});
+      if (existing) { toast('That title is already in the vault.'); return; }
+      const movie = await CinemaVaultLocalFirstRepository.saveMovie({
+        id: uid(),
+        title,
+        year: $('#add-year').value || null,
+        media_type: $('#add-type').value,
+        genre: $('#add-genre').value.trim(),
+        runtime_minutes: runtimeMinutes($('#add-runtime').value) || null,
+        watched: false
+      });
+      state.movies.unshift(movie);
+      toast('✓ Added to your vault.');
+      state.route = 'library';
+      state.filter = 'unwatched';
+      render();
+    } catch (error) {
+      console.error('[CinemaVault addSingle]', error);
+      toast('Could not add title: ' + (error?.message || 'unknown error'));
+    }
   }
 
   function parseBulkText(text) {
@@ -560,14 +565,19 @@
   }
 
   async function addParsed() {
-    let items = [];
-    try { items = JSON.parse($('#bulk-preview').dataset.items || '[]'); } catch (_) {}
-    if (!items.length) return;
-    for (const item of items) await CinemaVaultLocalFirstRepository.saveMovie(item);
-    await loadMovies();
-    toast('✓ ' + items.length + ' titles added.');
-    state.route='library';
-    render();
+    try {
+      let items = [];
+      try { items = JSON.parse($('#bulk-preview').dataset.items || '[]'); } catch (_) {}
+      if (!items.length) return;
+      for (const item of items) await CinemaVaultLocalFirstRepository.saveMovie(item);
+      await loadMovies();
+      toast('✓ ' + items.length + ' titles added.');
+      state.route='library';
+      render();
+    } catch (error) {
+      console.error('[CinemaVault addParsed]', error);
+      toast('Could not add titles: ' + (error?.message || 'unknown error'));
+    }
   }
 
   async function genreRandom() {
