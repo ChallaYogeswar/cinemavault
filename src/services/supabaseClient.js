@@ -76,7 +76,12 @@
   async function signUp(email, password) {
     const instance = getClient();
     if (!instance) throw new Error('Configure Supabase first.');
-    const { data, error } = await instance.auth.signUp({ email, password });
+    const redirectTo = window.location.origin + window.location.pathname + window.location.hash;
+    const { data, error } = await instance.auth.signUp({
+      email,
+      password,
+      options: { emailRedirectTo: redirectTo }
+    });
     if (error) throw error;
     return data;
   }
