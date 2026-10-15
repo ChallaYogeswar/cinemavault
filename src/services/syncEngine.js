@@ -203,10 +203,24 @@
   }
 
   function start() {
-    const run = () => syncSafe().then(() => {
-      if (typeof global.CinemaVaultAppRefresh === 'function') global.CinemaVaultAppRefresh();
-    });
-    window.addEventListener('online', run);
+    const run = async () => {
+      if (!global.CinemaVaultSupabase?.configured?.()) return { status: 'not-configured' };
+      try {
+        const session = await global.CinemaVaultSupabase.session();
+        if (!session?.user) return { status: 'signed-out' };
+        const result = await syncSafe();
+        if (result.status === 'synced' && typeof global.CinemaVaultAppRefresh === 'function') {
+          global.CinemaVaultAppRefresh();
+        }
+        return result;
+      } catch (error) {
+        return { status: 'error', error };
+      }
+    };
+
+    window.addEventListener('online', () => { void run(); });
+    // Pull remote records on startup for an already-configured, signed-in user.
+    if (global.navigator?.onLine) void run();
     return run;
   }
 
