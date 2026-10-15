@@ -746,6 +746,12 @@
     $$('[data-genre]').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')el.click();}));
   }
 
+  // Let the sync engine refresh UI state after remote records have been pulled.
+  window.CinemaVaultAppRefresh = async function () {
+    await loadMovies();
+    render();
+  };
+
   async function boot() {
     await migrateLegacyData();
     await CinemaVaultSyncQueue.resetProcessing();
