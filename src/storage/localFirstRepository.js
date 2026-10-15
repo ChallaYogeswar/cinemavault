@@ -15,6 +15,7 @@
       entityId: movie.id,
       payload: movie
     });
+    global.CinemaVaultSupabaseRepository?.flushQueue().catch((error) => console.error('[CinemaVault sync] Background sync failed:', error));
     return movie;
   }
 
@@ -28,6 +29,7 @@
       entityId: id,
       payload: movie
     });
+    global.CinemaVaultSupabaseRepository?.flushQueue().catch((error) => console.error('[CinemaVault sync] Background sync failed:', error));
     return movie;
   }
 
