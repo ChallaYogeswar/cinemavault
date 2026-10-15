@@ -329,8 +329,8 @@
   }
 
   function settingsPage() {
-    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>PR5 is local-first. Supabase sync arrives in the next integration phase.</p></div></section>' +
-      '<section class="settings-grid"><div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>Your current library lives in IndexedDB on this browser. Changes are recorded locally before any future remote synchronization.</p><span class="status-pill local">Local-first</span></div><div class="settings-panel"><span class="settings-icon">↗</span><h2>Sync queue</h2><p id="queue-status">Checking pending changes…</p><span class="status-pill pending">Ready for sync engine</span></div><div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops and metadata are fetched only when needed and cached locally.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div><div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local library</h2><p>This removes the CinemaVault local database from this browser.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div></section>';
+    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>Your library syncs with Supabase and stays cached locally for a responsive experience.</p></div></section>' +
+      '<section class="settings-grid"><div class="settings-panel"><span class="settings-icon">◉</span><h2>Private library</h2><p>Your signed-in account controls access to your remote collection. Local records are cached in this browser.</p><span class="status-pill local">Supabase connected</span><p><button class="ghost-button" data-action="sign-out">Sign out</button></p></div><div class="settings-panel"><span class="settings-icon">↗</span><h2>Sync queue</h2><p id="queue-status">Checking pending changes…</p><span class="status-pill pending">Local-first sync</span></div><div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops and metadata are fetched only when needed and cached locally.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div><div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local library</h2><p>This removes the CinemaVault local database from this browser, not the remote Supabase collection.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div></section>';
   }
 
   function render() {
@@ -651,8 +651,9 @@
     $$('[data-action="genre-random"]').forEach(el=>el.addEventListener('click',genreRandom));
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
-    $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
-    $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
+    $('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
+    $('[data-action="sign-out"]').forEach(el=>el.addEventListener('click',async()=>{try{await CinemaVaultSupabaseRepository.signOut();state.movies=[];state.metadata.clear();renderAuthGate('','You have signed out.');}catch(error){toast('Could not sign out: '+(error.message||error));}}));
+    $('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
     $$('[data-action="shuffle"]').forEach(el=>el.addEventListener('click',async()=>{state.recommendation=null; if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
@@ -661,13 +662,78 @@
     $$('[data-genre]').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')el.click();}));
   }
 
-  async function boot() {
+  function renderAuthGate(errorMessage = '', successMessage = '') {
+    const app = $('#app');
+    if (!app) return;
+    app.innerHTML = '<main class="auth-gate"><section class="auth-panel"><div class="auth-brand"><span class="auth-brand-mark">CV</span><span>CinemaVault</span></div><p class="eyebrow">YOUR PRIVATE CINEMA</p><h1>Your archive awaits.</h1><p>Sign in to load your private movie collection from Supabase. Your library is never made public.</p><form id="auth-form" class="auth-form"><label>Email address<input id="auth-email" type="email" autocomplete="email" required placeholder="you@example.com"></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required placeholder="Your account password"></label><button class="primary-button" type="submit">Sign in to CinemaVault</button><button class="ghost-button" id="magic-link-button" type="button">Email me a sign-in link</button></form><div id="auth-message" class="' + (errorMessage ? 'auth-error' : 'auth-success') + '">' + esc(errorMessage || successMessage) + '</div><p class="auth-footnote">Use the existing Supabase account that owns your movie library. No new account is created by the email-link option.</p></section></main>';
+    const form = $('#auth-form');
+    form?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const email = $('#auth-email').value.trim();
+      const password = $('#auth-password').value;
+      const button = form.querySelector('button[type="submit"]');
+      const message = $('#auth-message');
+      button.disabled = true;
+      button.textContent = 'Signing in…';
+      message.textContent = '';
+      try {
+        await CinemaVaultSupabaseRepository.signInWithPassword(email, password);
+        await startVault();
+      } catch (error) {
+        message.className = 'auth-error';
+        message.textContent = error?.message || 'Sign-in failed. Check your credentials and try again.';
+        button.disabled = false;
+        button.textContent = 'Sign in to CinemaVault';
+      }
+    });
+    $('#magic-link-button')?.addEventListener('click', async event => {
+      const email = $('#auth-email').value.trim();
+      const message = $('#auth-message');
+      if (!email) {
+        message.className = 'auth-error';
+        message.textContent = 'Enter your email address first.';
+        $('#auth-email').focus();
+        return;
+      }
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = 'Sending link…';
+      try {
+        await CinemaVaultSupabaseRepository.sendMagicLink(email);
+        message.className = 'auth-success';
+        message.textContent = 'If this email belongs to an existing account, a sign-in link has been sent. Check your inbox.';
+      } catch (error) {
+        message.className = 'auth-error';
+        message.textContent = error?.message || 'Could not send the sign-in link.';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Email me a sign-in link';
+      }
+    });
+  }
+
+  async function startVault() {
     await migrateLegacyData();
     await CinemaVaultSyncQueue.resetProcessing();
+    const syncResult = await CinemaVaultSupabaseRepository.syncMovies();
     await loadMovies();
     render();
-    window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
-    window.addEventListener('scroll',()=>document.body.classList.toggle('scrolled',window.scrollY>28),{passive:true});
+    if (!window.__cinemavaultGlobalListenersBound) {
+      window.__cinemavaultGlobalListenersBound = true;
+      window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
+      window.addEventListener('scroll',()=>document.body.classList.toggle('scrolled',window.scrollY>28),{passive:true});
+    }
+    if (syncResult.count === 0) toast('Signed in, but this account has no visible movie records.');
+    else toast('✓ Synced ' + syncResult.count.toLocaleString() + ' titles from your vault.');
+  }
+
+  async function boot() {
+    const session = await CinemaVaultSupabaseRepository.getSession();
+    if (!session) {
+      renderAuthGate();
+      return;
+    }
+    await startVault();
   }
 
   boot().catch(error=>{
