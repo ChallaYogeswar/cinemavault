@@ -97,20 +97,29 @@
       } catch (_) {}
     }
 
+    let importedCount = 0;
     if (Array.isArray(legacy) && legacy.length) {
       for (const item of legacy) {
         const movie = normalizeMovie(item);
-        if (movie.title) await CinemaVaultMovieRepository.upsert(movie);
+        if (movie.title) {
+          await CinemaVaultMovieRepository.upsert(movie);
+          importedCount += 1;
+        }
       }
-      state.migrated = true;
-      toast('Your existing library was moved into local storage.');
     }
 
-    await CinemaVaultDB.put(CinemaVaultDB.STORES.SETTINGS, {
-      key: 'pr5-migration-complete',
-      value: true,
-      completedAt: new Date().toISOString()
-    });
+    // Do not permanently mark migration complete when the previous cache is
+    // empty/unavailable. A backup or legacy cache may become available later.
+    if (importedCount > 0) {
+      state.migrated = true;
+      toast('Your existing library was moved into local storage.');
+      await CinemaVaultDB.put(CinemaVaultDB.STORES.SETTINGS, {
+        key: 'pr5-migration-complete',
+        value: true,
+        completedAt: new Date().toISOString(),
+        importedCount
+      });
+    }
   }
 
   async function loadMovies() {
@@ -723,11 +732,11 @@
     $$('[data-action="genre-random"]').forEach(el=>el.addEventListener('click',genreRandom));
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
-    $('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
-    $('[data-action="save-supabase"]').forEach(el=>el.addEventListener('click',saveSupabase));
-    $('[data-action="supabase-signin"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signin')));
-    $('[data-action="supabase-signup"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signup')));
-    $('[data-action="supabase-sync"]').forEach(el=>el.addEventListener('click',runSupabaseSync));
+    $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
+    $$('[data-action="save-supabase"]').forEach(el=>el.addEventListener('click',saveSupabase));
+    $$('[data-action="supabase-signin"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signin')));
+    $$('[data-action="supabase-signup"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signup')));
+    $$('[data-action="supabase-sync"]').forEach(el=>el.addEventListener('click',runSupabaseSync));
     $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
