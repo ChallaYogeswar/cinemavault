@@ -550,18 +550,34 @@
     $('#bulk-status').textContent = fresh.length + ' new of ' + parsed.length + ' parsed.';
     $('#bulk-preview').innerHTML = fresh.slice(0,20).map(m=>'<div class="preview-row"><b>'+esc(m.title)+'</b><span>'+esc([m.year,m.genre,m.media_type].filter(Boolean).join(' · '))+'</span></div>').join('') + (fresh.length>20?'<p class="muted">+'+(fresh.length-20)+' more</p>':'');
     $('#bulk-preview').dataset.items = JSON.stringify(fresh);
-    if (fresh.length) $('#bulk-preview').insertAdjacentHTML('beforeend','<button class="primary-button" data-action="add-parsed">Add '+fresh.length+' titles</button>');
-  }
+    if (fresh.length) {
+      $('#bulk-preview').insertAdjacentHTML('beforeend','<button class="primary-button" data-action="add-parsed">Add '+fresh.length+' titles</button>');
+      // This button is created after render-time listeners are bound, so bind it here.
+      $('#bulk-preview [data-action="add-parsed"]')?.addEventListener('click', addParsed);
+    }
 
-  async function addParsed() {
+  async function addParsed(event) {
     let items = [];
     try { items = JSON.parse($('#bulk-preview').dataset.items || '[]'); } catch (_) {}
     if (!items.length) return;
-    for (const item of items) await CinemaVaultLocalFirstRepository.saveMovie(item);
-    await loadMovies();
-    toast('✓ ' + items.length + ' titles added.');
-    state.route='library';
-    render();
+    const button = event?.currentTarget || $('#bulk-preview [data-action="add-parsed"]');
+    if (button) { button.disabled = true; button.textContent = 'Adding titles…'; }
+    const status = $('#bulk-status');
+    if (status) status.textContent = 'Saving ' + items.length + ' titles locally and syncing…';
+    try {
+      await CinemaVaultLocalFirstRepository.saveMovies(items);
+      await CinemaVaultSupabaseRepository.flushQueue();
+      await loadMovies();
+      if (status) status.textContent = 'Added ' + items.length + ' titles. Sync completed; refresh to verify persistence.';
+      toast('✓ ' + items.length + ' titles added.');
+      state.route='library';
+      render();
+    } catch (error) {
+      console.error('[CinemaVault bulk add]', error);
+      if (status) status.textContent = 'Bulk add failed: ' + (error?.message || String(error));
+      toast('Bulk add failed. See the bulk status for details.');
+      if (button) { button.disabled = false; button.textContent = 'Retry adding ' + items.length + ' titles'; }
+    }
   }
 
   async function genreRandom() {
