@@ -144,6 +144,12 @@
   async function syncMovies() {
     const first = await fetchAllMovies();
     await hydrateLocal(first.rows);
+
+    // Retry mutations that failed in an earlier session. Upserts are keyed by
+    // movie id, so retrying is safe and lets previously queued additions recover.
+    const failed = await Queue().list(Queue().STATUS.FAILED);
+    for (const item of failed) await Queue().retry(item.id);
+
     await flushQueue();
     const refreshed = await fetchAllMovies();
     await hydrateLocal(refreshed.rows);
