@@ -40,6 +40,28 @@
     if (error) throw error;
   }
 
+  async function resetPasswordForEmail(email) {
+    const redirectTo = window.location.origin + window.location.pathname + '?auth=reset-password';
+    const { error } = await client().auth.resetPasswordForEmail(email.trim(), { redirectTo });
+    if (error) throw error;
+  }
+
+  async function updatePassword(password) {
+    const { data, error } = await client().auth.updateUser({ password });
+    if (error) throw error;
+    return data.user;
+  }
+
+  async function signInWithOAuth(provider) {
+    if (!['google', 'github'].includes(provider)) throw new Error('Unsupported sign-in provider.');
+    const { data, error } = await client().auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: window.location.origin + window.location.pathname }
+    });
+    if (error) throw error;
+    return data;
+  }
+
   async function signOut() {
     const { error } = await client().auth.signOut();
     if (error) throw error;
@@ -161,6 +183,9 @@
     getSession,
     signInWithPassword,
     sendMagicLink,
+    resetPasswordForEmail,
+    updatePassword,
+    signInWithOAuth,
     signOut,
     fetchAllMovies,
     syncMovies,
