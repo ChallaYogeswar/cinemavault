@@ -172,3 +172,7 @@ body.modal-open{overflow:hidden}
 .auth-divider{display:flex;align-items:center;gap:12px;color:#777b82;font-size:12px;margin:18px 0}
 .auth-divider:before,.auth-divider:after{content:"";height:1px;flex:1;background:rgba(255,255,255,.12)}
 .auth-footnote{font-size:12px!important;color:#7f8289!important;margin:22px 0 0!important}
+
+.auth-provider-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 6px}
+.auth-provider-row .ghost-button{width:100%;white-space:normal}
+@media(max-width:480px){.auth-provider-row{grid-template-columns:1fr}}
