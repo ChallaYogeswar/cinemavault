@@ -19,6 +19,26 @@
     return movie;
   }
 
+  async function saveMovies(inputs) {
+    const saved = [];
+    for (const input of inputs) {
+      const exists = input.id ? await Movies().get(input.id) : null;
+      const movie = await Movies().upsert(input);
+      await Queue().enqueue({
+        operation: exists ? 'update' : 'create',
+        entity: 'movie',
+        entityId: movie.id,
+        payload: movie
+      });
+      saved.push(movie);
+    }
+    // One queue flush after all local writes avoids overlapping flushes during bulk import.
+    if (saved.length) {
+      global.CinemaVaultSupabaseRepository?.flushQueue().catch((error) => console.error('[CinemaVault sync] Background bulk sync failed:', error));
+    }
+    return saved;
+  }
+
   async function deleteMovie(id) {
     const movie = await Movies().softDelete(id);
     if (!movie) return null;
@@ -35,6 +55,7 @@
 
   return global.CinemaVaultLocalFirstRepository = Object.freeze({
     saveMovie,
+    saveMovies,
     deleteMovie
   });
 })(window);
