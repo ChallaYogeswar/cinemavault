@@ -32,10 +32,7 @@
       });
       saved.push(movie);
     }
-    // One queue flush after all local writes avoids overlapping flushes during bulk import.
-    if (saved.length) {
-      global.CinemaVaultSupabaseRepository?.flushQueue().catch((error) => console.error('[CinemaVault sync] Background bulk sync failed:', error));
-    }
+    // Caller flushes once after all local writes are queued.
     return saved;
   }
 
