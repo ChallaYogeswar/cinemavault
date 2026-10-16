@@ -555,6 +555,7 @@
       // This button is created after render-time listeners are bound, so bind it here.
       $('#bulk-preview [data-action="add-parsed"]')?.addEventListener('click', addParsed);
     }
+  }
 
   async function addParsed(event) {
     let items = [];
