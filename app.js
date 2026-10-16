@@ -651,9 +651,9 @@
     $$('[data-action="genre-random"]').forEach(el=>el.addEventListener('click',genreRandom));
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
-    $('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
-    $('[data-action="sign-out"]').forEach(el=>el.addEventListener('click',async()=>{try{await CinemaVaultSupabaseRepository.signOut();state.movies=[];state.metadata.clear();renderAuthGate('','You have signed out.');}catch(error){toast('Could not sign out: '+(error.message||error));}}));
-    $('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
+    $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
+    $$('[data-action="sign-out"]').forEach(el=>el.addEventListener('click',async()=>{try{await CinemaVaultSupabaseRepository.signOut();state.movies=[];state.metadata.clear();renderAuthGate('','You have signed out.');}catch(error){toast('Could not sign out: '+(error.message||error));}}));
+    $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
     $$('[data-action="shuffle"]').forEach(el=>el.addEventListener('click',async()=>{state.recommendation=null; if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
