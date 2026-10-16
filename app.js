@@ -678,10 +678,80 @@
     $$('[data-genre]').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')el.click();}));
   }
 
+  async function oauthLogin(provider) {
+    const message = $('#auth-message');
+    const buttons = [$('#google-login-button'), $('#github-login-button')].filter(Boolean);
+    buttons.forEach(button => { button.disabled = true; });
+    if (message) { message.className = 'auth-success'; message.textContent = 'Redirecting to ' + (provider === 'google' ? 'Google' : 'GitHub') + '…'; }
+    try {
+      await CinemaVaultSupabaseRepository.signInWithOAuth(provider);
+    } catch (error) {
+      if (message) { message.className = 'auth-error'; message.textContent = error?.message || 'OAuth sign-in failed.'; }
+      buttons.forEach(button => { button.disabled = false; });
+    }
+  }
+
+  function renderPasswordReset() {
+    const app = $('#app');
+    if (!app) return;
+    app.innerHTML = '<main class="auth-gate"><section class="auth-panel"><div class="auth-brand"><span class="auth-brand-mark">CV</span><span>CinemaVault</span></div><p class="eyebrow">ACCOUNT RECOVERY</p><h1>Choose a new password.</h1><form id="password-reset-form" class="auth-form"><label>New password<input id="new-password" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></label><label>Confirm password<input id="confirm-password" type="password" autocomplete="new-password" minlength="8" required placeholder="Repeat your new password"></label><button class="primary-button" type="submit">Update password</button></form><div id="auth-message" class="auth-success"></div></section></main>';
+    $('#password-reset-form')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const password = $('#new-password').value;
+      const confirm = $('#confirm-password').value;
+      const message = $('#auth-message');
+      if (password !== confirm) {
+        message.className = 'auth-error';
+        message.textContent = 'The passwords do not match.';
+        return;
+      }
+      const button = event.currentTarget.querySelector('button[type="submit"]');
+      button.disabled = true;
+      button.textContent = 'Updating…';
+      try {
+        await CinemaVaultSupabaseRepository.updatePassword(password);
+        history.replaceState(null, '', window.location.pathname);
+        await startVault();
+        toast('Password updated successfully.');
+      } catch (error) {
+        message.className = 'auth-error';
+        message.textContent = error?.message || 'Could not update password. Request a new reset link.';
+        button.disabled = false;
+        button.textContent = 'Update password';
+      }
+    });
+  }
+
   function renderAuthGate(errorMessage = '', successMessage = '') {
     const app = $('#app');
     if (!app) return;
-    app.innerHTML = '<main class="auth-gate"><section class="auth-panel"><div class="auth-brand"><span class="auth-brand-mark">CV</span><span>CinemaVault</span></div><p class="eyebrow">YOUR PRIVATE CINEMA</p><h1>Your archive awaits.</h1><p>Sign in to load your private movie collection from Supabase. Your library is never made public.</p><form id="auth-form" class="auth-form"><label>Email address<input id="auth-email" type="email" autocomplete="email" required placeholder="you@example.com"></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required placeholder="Your account password"></label><button class="primary-button" type="submit">Sign in to CinemaVault</button><button class="ghost-button" id="magic-link-button" type="button">Email me a sign-in link</button></form><div id="auth-message" class="' + (errorMessage ? 'auth-error' : 'auth-success') + '">' + esc(errorMessage || successMessage) + '</div><p class="auth-footnote">Use the existing Supabase account that owns your movie library. No new account is created by the email-link option.</p></section></main>';
+    app.innerHTML = '<main class="auth-gate"><section class="auth-panel"><div class="auth-brand"><span class="auth-brand-mark">CV</span><span>CinemaVault</span></div><p class="eyebrow">YOUR PRIVATE CINEMA</p><h1>Your archive awaits.</h1><p>Sign in to load your private movie collection from Supabase. Your library is never made public.</p><div class="auth-provider-row"><button class="ghost-button" id="google-login-button" type="button">Continue with Google</button><button class="ghost-button" id="github-login-button" type="button">Continue with GitHub</button></div><form id="auth-form" class="auth-form"><label>Email address<input id="auth-email" type="email" autocomplete="email" required placeholder="you@example.com"></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required placeholder="Your account password"></label><button class="primary-button" type="submit">Sign in to CinemaVault</button><button class="ghost-button" id="reset-password-button" type="button">Forgot password?</button><button class="ghost-button" id="magic-link-button" type="button">Email me a sign-in link</button></form><div id="auth-message" class="' + (errorMessage ? 'auth-error' : 'auth-success') + '">' + esc(errorMessage || successMessage) + '</div><p class="auth-footnote">Use the existing Supabase account that owns your movie library. No new account is created by the email-link option.</p></section></main>';
+    $('#google-login-button')?.addEventListener('click', () => oauthLogin('google'));
+    $('#github-login-button')?.addEventListener('click', () => oauthLogin('github'));
+    $('#reset-password-button')?.addEventListener('click', async () => {
+      const email = $('#auth-email').value.trim();
+      const message = $('#auth-message');
+      if (!email) {
+        message.className = 'auth-error';
+        message.textContent = 'Enter your email address first.';
+        $('#auth-email').focus();
+        return;
+      }
+      const button = $('#reset-password-button');
+      button.disabled = true;
+      button.textContent = 'Sending reset email…';
+      try {
+        await CinemaVaultSupabaseRepository.resetPasswordForEmail(email);
+        message.className = 'auth-success';
+        message.textContent = 'If the account exists, a password-reset link has been sent. Open it to choose a new password.';
+      } catch (error) {
+        message.className = 'auth-error';
+        message.textContent = error?.message || 'Could not send the password-reset email.';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Forgot password?';
+      }
+    });
     const form = $('#auth-form');
     form?.addEventListener('submit', async event => {
       event.preventDefault();
@@ -745,6 +815,14 @@
 
   async function boot() {
     const session = await CinemaVaultSupabaseRepository.getSession();
+    if (new URLSearchParams(window.location.search).get('auth') === 'reset-password') {
+      if (!session) {
+        renderAuthGate('The reset link is invalid or expired. Request a new password-reset email.');
+        return;
+      }
+      renderPasswordReset();
+      return;
+    }
     if (!session) {
       renderAuthGate();
       return;
