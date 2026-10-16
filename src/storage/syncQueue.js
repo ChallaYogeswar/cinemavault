@@ -1,5 +1,5 @@
 /* Durable local-first mutation queue.
- * The queue records intent; the future sync engine will execute it against Supabase.
+ * The queue records intent; the sync engine executes it against Supabase.
  */
 (function (global) {
   'use strict';
@@ -33,16 +33,23 @@
     const db = await DB().open();
     try {
       const tx = db.transaction(DB().STORES.PENDING, 'readwrite');
-      const request = tx.objectStore(DB().STORES.PENDING).add(record);
-      const id = await new Promise((resolve, reject) => {
+
+      // Attach transaction handlers immediately. IndexedDB can dispatch "complete"
+      // before an awaited request resumes; attaching these handlers afterwards can
+      // leave enqueue() pending forever, making Add appear to do nothing.
+      const transactionDone = new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error('Failed to save sync queue item'));
+        tx.onabort = () => reject(tx.error || new Error('Sync queue transaction was aborted'));
+      });
+
+      const requestResult = new Promise((resolve, reject) => {
+        const request = tx.objectStore(DB().STORES.PENDING).add(record);
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
+        request.onerror = () => reject(request.error || new Error('Failed to enqueue sync operation'));
       });
-      await new Promise((resolve, reject) => {
-        tx.oncomplete = resolve;
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
-      });
+
+      const [id] = await Promise.all([requestResult, transactionDone]);
       return { ...record, id };
     } finally {
       db.close();
