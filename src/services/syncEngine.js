@@ -165,10 +165,21 @@
   }
 
   let activeSync = null;
+  let rerunRequested = false;
 
   async function syncNow() {
-    if (activeSync) return activeSync;
-    activeSync = syncNowInternal();
+    if (activeSync) {
+      rerunRequested = true;
+      return activeSync;
+    }
+    activeSync = (async () => {
+      let result;
+      do {
+        rerunRequested = false;
+        result = await syncNowInternal();
+      } while (rerunRequested);
+      return result;
+    })();
     try { return await activeSync; } finally { activeSync = null; }
   }
 
@@ -186,6 +197,11 @@
 
     const newest = await pullMovies(instance, previous?.cursor || null);
     await pullMetadata(instance);
+    const failedAfterPush = await global.CinemaVaultSyncQueue.list('failed');
+    if (failedAfterPush.length) {
+      const lastError = failedAfterPush[failedAfterPush.length - 1]?.lastError || 'One or more queued changes could not be saved.';
+      throw new Error(failedAfterPush.length + ' cloud change(s) failed. ' + lastError);
+    }
 
     await global.CinemaVaultSyncStateRepository.save({
       id: 'default',
