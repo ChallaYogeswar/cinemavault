@@ -6,12 +6,14 @@
 
   const URL_KEY = 'cinemavault_supabase_url';
   const KEY_KEY = 'cinemavault_supabase_publishable_key';
+  // Public project URL; the publishable key is configured once per browser in Settings.
+  const DEFAULT_URL = 'https://qhopjfqpmoniggejgvjt.supabase.co';
   let client = null;
   let signature = '';
 
   function config() {
     return {
-      url: localStorage.getItem(URL_KEY) || '',
+      url: localStorage.getItem(URL_KEY) || DEFAULT_URL,
       key: localStorage.getItem(KEY_KEY) || ''
     };
   }
@@ -73,6 +75,22 @@
     return data;
   }
 
+  async function sendMagicLink(email) {
+    const instance = getClient();
+    if (!instance) throw new Error('Save the Supabase project URL and publishable key first.');
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      throw new Error('Enter a valid email address.');
+    }
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { error } = await instance.auth.signInWithOtp({
+      email: cleanEmail,
+      options: { emailRedirectTo: redirectTo, shouldCreateUser: true }
+    });
+    if (error) throw error;
+    return { email: cleanEmail };
+  }
+
   async function signUp(email, password) {
     const instance = getClient();
     if (!instance) throw new Error('Configure Supabase first.');
@@ -109,6 +127,7 @@
     session,
     signIn,
     signUp,
+    sendMagicLink,
     signOut,
     onAuthStateChange
   });
