@@ -550,7 +550,6 @@
           title = title.split(/\s[.:]\s/)[0].trim();
         }
       }
-      const afterYear = yearMatch ? normalizedLine.slice(yearMatch.index + yearMatch[0].length).replace(/^\s*[|—–·.:]\s*/, '') : '';
       const parts = normalizedLine.split(/\s+[|—–]\s+|\s+·\s+/).map(part => part.trim()).filter(Boolean);
       const genre = parts.find(part => /[A-Za-z].*\//.test(part) && !/\b(?:CBFC|Censor|Certificate|Source)\b/i.test(part)) || '';
       const mediaType = /\b(series|show|tv)\b/i.test(normalizedLine) ? 'tv' : 'movie';
