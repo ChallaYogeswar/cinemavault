@@ -164,7 +164,15 @@
     }
   }
 
+  let activeSync = null;
+
   async function syncNow() {
+    if (activeSync) return activeSync;
+    activeSync = syncNowInternal();
+    try { return await activeSync; } finally { activeSync = null; }
+  }
+
+  async function syncNowInternal() {
     const instance = client();
     if (!instance) return { status: 'not-configured', pushed: 0, pulled: 0 };
 
@@ -219,9 +227,17 @@
     };
 
     window.addEventListener('online', () => { void run(); });
+    // The magic-link callback creates a Supabase session without a dedicated login page.
+    if (!start.authListenerAttached && global.CinemaVaultSupabase?.onAuthStateChange) {
+      start.authListenerAttached = true;
+      global.CinemaVaultSupabase.onAuthStateChange((event, session) => {
+        if (session?.user && ['SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED'].includes(event)) {
+          void run();
+        }
+      });
+    }
     // Pull remote records on startup for an already-configured, signed-in user.
-    if (global.navigator?.onLine) void run();
-    return run;
+    return global.navigator?.onLine ? run() : Promise.resolve({ status: 'offline' });
   }
 
   return global.CinemaVaultSyncEngine = Object.freeze({
