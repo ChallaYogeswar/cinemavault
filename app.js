@@ -570,18 +570,50 @@
     const raw = $('#bulk-input').value.trim();
     if (!raw) return toast('Paste some titles first.');
     const parsed = parseBulkText(raw);
-    const fresh = [];
-    for (const item of parsed) {
-      const duplicate = await CinemaVaultMovieRepository.findDuplicate(item);
-      if (!duplicate) fresh.push(item);
+    const status = $('#bulk-status');
+    const preview = $('#bulk-preview');
+    status.textContent = 'Checking titles against your Supabase library…';
+    preview.innerHTML = '';
+    preview.dataset.items = '[]';
+
+    let remoteRows;
+    try {
+      const remote = await CinemaVaultSupabaseRepository.fetchAllMovies();
+      remoteRows = remote.rows.filter(row => !row.deleted_at);
+    } catch (error) {
+      status.textContent = 'Could not verify duplicates against Supabase. Check your sign-in and connection, then parse again. ' + (error?.message || String(error));
+      return;
     }
-    $('#bulk-status').textContent = fresh.length + ' new of ' + parsed.length + ' parsed.';
-    $('#bulk-preview').innerHTML = fresh.slice(0,20).map(m=>'<div class="preview-row"><b>'+esc(m.title)+'</b><span>'+esc([m.year,m.genre,m.media_type].filter(Boolean).join(' · '))+'</span></div>').join('') + (fresh.length>20?'<p class="muted">+'+(fresh.length-20)+' more</p>':'');
-    $('#bulk-preview').dataset.items = JSON.stringify(fresh);
+
+    const normalize = title => CinemaVaultMovieRepository.normalizeTitle(title);
+    const fresh = [];
+    const duplicates = [];
+    const seenInPaste = new Set();
+    for (const item of parsed) {
+      const normalized = normalize(item.title);
+      const key = [normalized, item.year || '', item.media_type].join('|');
+      const duplicateRemote = remoteRows.some(row =>
+        normalize(row.title) === normalized
+        && (item.media_type || 'movie') === (row.media_type || 'movie')
+        && (item.year == null || row.year == null || Number(item.year) === Number(row.year))
+      );
+      const duplicateLocal = await CinemaVaultMovieRepository.findDuplicate(item);
+      if (duplicateRemote || duplicateLocal || seenInPaste.has(key)) {
+        duplicates.push(item);
+      } else {
+        fresh.push(item);
+        seenInPaste.add(key);
+      }
+    }
+    status.textContent = fresh.length + ' new of ' + parsed.length + ' parsed; ' + duplicates.length + ' already in your vault or duplicated in this paste.';
+    preview.innerHTML = fresh.slice(0,20).map(m=>'<div class="preview-row"><b>'+esc(m.title)+'</b><span>'+esc([m.year,m.genre,formatRuntime(m.runtime_minutes),m.media_type].filter(Boolean).join(' · '))+'</span></div>').join('') + (fresh.length>20?'<p class="muted">+'+(fresh.length-20)+' more</p>':'');
+    if (duplicates.length) {
+      preview.insertAdjacentHTML('beforeend','<p class="muted">Skipped existing titles: '+duplicates.slice(0,8).map(item=>esc(item.title)).join(', ')+(duplicates.length>8?' and '+(duplicates.length-8)+' more':'')+'</p>');
+    }
+    preview.dataset.items = JSON.stringify(fresh);
     if (fresh.length) {
-      $('#bulk-preview').insertAdjacentHTML('beforeend','<button class="primary-button" data-action="add-parsed">Add '+fresh.length+' titles</button>');
-      // This button is created after render-time listeners are bound, so bind it here.
-      $('#bulk-preview [data-action="add-parsed"]')?.addEventListener('click', addParsed);
+      preview.insertAdjacentHTML('beforeend','<button class="primary-button" data-action="add-parsed">Add '+fresh.length+' titles</button>');
+      preview.querySelector('[data-action="add-parsed"]')?.addEventListener('click', addParsed);
     }
   }
 
