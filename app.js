@@ -542,19 +542,48 @@
   }
 
   function parseBulkText(text) {
-    return text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{
-      const parts = line.split(/\s+[|—–-]\s+/);
-      const title = (parts[0] || line).trim();
-      const yearMatch = line.match(/\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/);
+    return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+      // Supported formats:
+      // Title | 2024 | Sci-Fi, Drama | 2h 10m
+      // Title — 2024 · Sci-Fi/Thriller · 2h 10m
+      // Kala . CBFC: A 2021 · Action/Thriller · 2h 10m
+      const normalized = line.replace(/[•·]/g, ' · ').replace(/\s+/g, ' ').trim();
+      const yearMatch = normalized.match(/\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/);
+      const year = yearMatch ? Number(yearMatch[1]) : null;
+      const runtimeMatch = normalized.match(/(?:(\d+)\s*h)?\s*(\d+)\s*m\b/i)
+        || normalized.match(/\b(\d+)\s*h\b/i);
+      const runtimeMinutes = runtimeMatch
+        ? (runtimeMatch[2] != null
+          ? Number(runtimeMatch[1] || 0) * 60 + Number(runtimeMatch[2])
+          : Number(runtimeMatch[1]) * 60)
+        : null;
+      const parts = normalized.split(/\s+[|—–-]\s+|\s+·\s+/).map(part => part.trim()).filter(Boolean);
+      let title = parts[0] || normalized;
+      const sourceMarker = title.search(/\s*[.:]\s*(?=(?:CBFC|Censor|Certificate|Source)\b)/i);
+      if (sourceMarker >= 0) title = title.slice(0, sourceMarker).trim();
+      title = title.replace(/\s*\((Series|Show|TV)\)\s*/i, '').trim();
+
+      const yearPartIndex = yearMatch ? parts.findIndex(part => /\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/.test(part)) : -1;
+      const genreStart = yearPartIndex >= 0 ? yearPartIndex + 1 : (parts.length > 1 ? 1 : parts.length);
+      const genreParts = [];
+      for (const part of parts.slice(genreStart)) {
+        if (/^(?:(?:\d+)\s*h)?\s*(?:\d+)\s*m\b/i.test(part) || /^\d+\s*h\b/i.test(part)) break;
+        if (/\b(?:CBFC|Censor|Certificate|Source)\b/i.test(part)) continue;
+        if (/^(18\d{2}|19\d{2}|20\d{2}|21\d{2})$/.test(part)) continue;
+        genreParts.push(part);
+      }
+      const genre = genreParts.join(', ').trim();
+      const mediaType = /\b(series|show|tv)\b/i.test(normalized) ? 'tv' : 'movie';
       return {
         id: uid(),
-        title: title.replace(/\s*\((Series|Show|TV)\)\s*/i,'').trim(),
-        year: yearMatch ? Number(yearMatch[1]) : null,
-        media_type: /\b(series|show|tv)\b/i.test(line) ? 'tv' : 'movie',
-        genre: parts[1] && !/^\d{4}$/.test(parts[1]) ? parts[1].trim() : '',
+        title,
+        year,
+        media_type: mediaType,
+        genre,
+        runtime_minutes: runtimeMinutes,
         watched: false
       };
-    });
+    }).filter(movie => movie.title);
   }
 
   async function parseBulk() {
