@@ -338,13 +338,12 @@
   }
 
   function settingsPage() {
-    const supa = window.CinemaVaultSupabase?.config?.() || {url:'',key:''};
-    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>Local-first storage remains the primary experience. Supabase is an optional synchronization layer.</p></div></section>' +
+    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>No account or sign-in is required for this UI-first phase. Your archive is saved locally while we focus on the cinematic interface and movie adding.</p></div></section>' +
       '<section class="settings-grid">' +
-      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>Your library lives in IndexedDB on this browser. Every local mutation is saved before synchronization.</p><span class="status-pill local">Local-first</span></div>' +
-      '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Cloud sync</h2><p id="sync-status">Checking Supabase connection…</p><div class="form-stack compact"><label>Supabase project URL<input id="supabase-url" value="' + esc(supa.url) + '" placeholder="https://your-project.supabase.co"></label><label>Publishable key<input id="supabase-key" type="password" value="' + esc(supa.key) + '" placeholder="sb_publishable_…"></label><button class="ghost-button" data-action="save-supabase">Save connection</button></div><div class="sync-auth"><label>Email<input id="supabase-email" type="email" autocomplete="email" placeholder="you@example.com"></label><label>Password<input id="supabase-password" type="password" autocomplete="current-password" placeholder="••••••••"></label><div class="panel-actions"><button class="primary-button" data-action="supabase-signin">Sign in</button><button class="ghost-button" data-action="supabase-signup">Create account</button><button class="ghost-button" data-action="supabase-sync">Sync now</button></div></div><span class="status-pill pending">RLS protected</span></div>' +
-      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops and metadata are fetched only when needed and cached locally. Cached metadata can sync with your movie record.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div>' +
-      '<div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local library</h2><p>This removes the CinemaVault local database from this browser.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>Your movie library is saved in IndexedDB in this browser. Adding, editing, ratings, and watched status stay local.</p><span class="status-pill local">Local-first</span></div>' +
+      '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Pending changes</h2><p id="queue-status">Checking local changes…</p><span class="status-pill pending">Remote sync paused</span><p class="muted">Remote account sync is paused while the UI and import flows are being stabilized. Queued changes are kept locally.</p></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops, and film details can be fetched on demand and cached in this browser.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div>' +
+      '<div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local library</h2><p>This removes CinemaVault data from this browser only. It does not delete any remote database records.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div>' +
       '</section>';
   }
 
@@ -362,7 +361,7 @@
     reveal();
     if (state.route === 'home') renderHomeRecommendation();
     if (state.route === 'discover') { renderDiscoverRecommendation(); renderHistory(); }
-    if (state.route === 'settings') { updateQueueStatus(); updateSyncStatus(); }
+    if (state.route === 'settings') updateQueueStatus();
     enrichCards();
     preloadHero();
   }
@@ -543,19 +542,48 @@
   }
 
   function parseBulkText(text) {
-    return text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{
-      const parts = line.split(/\s+[|—–-]\s+/);
-      const title = (parts[0] || line).trim();
-      const yearMatch = line.match(/\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/);
+    return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+      // Supported formats:
+      // Title | 2024 | Sci-Fi, Drama | 2h 10m
+      // Title — 2024 · Sci-Fi/Thriller · 2h 10m
+      // Kala . CBFC: A 2021 · Action/Thriller · 2h 10m
+      const normalized = line.replace(/[•·]/g, ' · ').replace(/\s+/g, ' ').trim();
+      const yearMatch = normalized.match(/\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/);
+      const year = yearMatch ? Number(yearMatch[1]) : null;
+      const runtimeMatch = normalized.match(/(?:(\d+)\s*h)?\s*(\d+)\s*m\b/i)
+        || normalized.match(/\b(\d+)\s*h\b/i);
+      const runtimeMinutes = runtimeMatch
+        ? (runtimeMatch[2] != null
+          ? Number(runtimeMatch[1] || 0) * 60 + Number(runtimeMatch[2])
+          : Number(runtimeMatch[1]) * 60)
+        : null;
+      const parts = normalized.split(/\s+[|—–-]\s+|\s+·\s+/).map(part => part.trim()).filter(Boolean);
+      let title = parts[0] || normalized;
+      const sourceMarker = title.search(/\s*[.:]\s*(?=(?:CBFC|Censor|Certificate|Source)\b)/i);
+      if (sourceMarker >= 0) title = title.slice(0, sourceMarker).trim();
+      title = title.replace(/\s*\((Series|Show|TV)\)\s*/i, '').trim();
+
+      const yearPartIndex = yearMatch ? parts.findIndex(part => /\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/.test(part)) : -1;
+      const genreStart = yearPartIndex >= 0 ? yearPartIndex + 1 : (parts.length > 1 ? 1 : parts.length);
+      const genreParts = [];
+      for (const part of parts.slice(genreStart)) {
+        if (/^(?:(?:\d+)\s*h)?\s*(?:\d+)\s*m\b/i.test(part) || /^\d+\s*h\b/i.test(part)) break;
+        if (/\b(?:CBFC|Censor|Certificate|Source)\b/i.test(part)) continue;
+        if (/^(18\d{2}|19\d{2}|20\d{2}|21\d{2})$/.test(part)) continue;
+        genreParts.push(part);
+      }
+      const genre = genreParts.join(', ').trim();
+      const mediaType = /\b(series|show|tv)\b/i.test(normalized) ? 'tv' : 'movie';
       return {
         id: uid(),
-        title: title.replace(/\s*\((Series|Show|TV)\)\s*/i,'').trim(),
-        year: yearMatch ? Number(yearMatch[1]) : null,
-        media_type: /\b(series|show|tv)\b/i.test(line) ? 'tv' : 'movie',
-        genre: parts[1] && !/^\d{4}$/.test(parts[1]) ? parts[1].trim() : '',
+        title,
+        year,
+        media_type: mediaType,
+        genre,
+        runtime_minutes: runtimeMinutes,
         watched: false
       };
-    });
+    }).filter(movie => movie.title);
   }
 
   async function parseBulk() {
@@ -600,62 +628,6 @@
     const failed = await CinemaVaultSyncQueue.list('failed');
     const el = $('#queue-status');
     if (el) el.textContent = pending.length + ' pending local change' + (pending.length===1?'':'s') + (failed.length ? ' · ' + failed.length + ' failed waiting for retry' : '') + '.';
-  }
-
-  async function updateSyncStatus() {
-    const el = $('#sync-status');
-    if (!el) return;
-    if (!window.CinemaVaultSupabase?.configured?.()) {
-      el.textContent = 'Not configured — CinemaVault is running fully locally.';
-      return;
-    }
-    try {
-      const session = await window.CinemaVaultSupabase.session();
-      el.textContent = session?.user ? 'Connected as ' + (session.user.email || session.user.id) + '.' : 'Connected to Supabase, but no user is signed in.';
-    } catch (error) {
-      el.textContent = 'Supabase connection error: ' + error.message;
-    }
-  }
-
-  async function saveSupabase() {
-    try {
-      window.CinemaVaultSupabase.saveConfig($('#supabase-url').value, $('#supabase-key').value);
-      await updateSyncStatus();
-      toast('Supabase connection saved locally.');
-    } catch (error) {
-      toast(error.message);
-    }
-  }
-
-  async function supabaseAuth(action) {
-    try {
-      if (!window.CinemaVaultSupabase.configured()) throw new Error('Save the Supabase connection first.');
-      const email = $('#supabase-email').value.trim();
-      const password = $('#supabase-password').value;
-      if (!email || !password) throw new Error('Email and password are required.');
-      const result = action === 'signup'
-        ? await window.CinemaVaultSupabase.signUp(email, password)
-        : await window.CinemaVaultSupabase.signIn(email, password);
-      if (result.session) toast(action === 'signup' ? 'Account created and signed in.' : 'Signed in.');
-      else toast('Account created. Check your email if confirmation is enabled.');
-      await updateSyncStatus();
-    } catch (error) {
-      toast(error.message);
-    }
-  }
-
-  async function runSupabaseSync() {
-    toast('Synchronizing local changes…');
-    const result = await window.CinemaVaultSyncEngine.syncSafe();
-    if (result.status === 'synced') {
-      await loadMovies();
-      render();
-      toast('✓ Local vault synchronized.');
-    } else if (result.status === 'not-configured') {
-      toast('Configure Supabase first.');
-    } else {
-      toast('Sync failed: ' + (result.error?.message || 'unknown error'));
-    }
   }
 
   function saveKey() {
@@ -733,10 +705,6 @@
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
     $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
-    $$('[data-action="save-supabase"]').forEach(el=>el.addEventListener('click',saveSupabase));
-    $$('[data-action="supabase-signin"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signin')));
-    $$('[data-action="supabase-signup"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signup')));
-    $$('[data-action="supabase-sync"]').forEach(el=>el.addEventListener('click',runSupabaseSync));
     $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
@@ -759,7 +727,6 @@
     render();
     window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
     window.addEventListener('scroll',()=>document.body.classList.toggle('scrolled',window.scrollY>28),{passive:true});
-    if (window.CinemaVaultSyncEngine) window.CinemaVaultSyncEngine.start();
   }
 
   boot().catch(error=>{
