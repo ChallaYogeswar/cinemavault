@@ -341,7 +341,7 @@
     const config = window.CinemaVaultSupabase?.config?.() || { url: '', key: '' };
     return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>Your library stays local until you connect your verified email. After that, the same private library can sync across devices without a visible sign-in page.</p></div></section>' +
       '<section class="settings-grid">' +
-      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>Private cloud sync</h2><p id="sync-account-status">Checking your secure connection…</p><label class="inline-field">Supabase project URL<input id="supabase-url" type="url" value="' + esc(config.url || '') + '" placeholder="https://your-project.supabase.co" autocomplete="url"></label><label class="inline-field">Publishable key<input id="supabase-publishable-key" type="password" value="' + esc(config.key || '') + '" placeholder="sb_publishable_…" autocomplete="off"></label><label class="inline-field">Email for your vault<input id="sync-email" type="email" placeholder="you@example.com" autocomplete="email"></label><div class="panel-actions"><button class="ghost-button" data-action="save-supabase-config">Save connection</button><button class="primary-button" data-action="send-sync-link">Email secure link</button></div><p class="muted">Use the same verified email on every device. The link establishes your account; row-level security keeps your movie records private. Only a public/publishable Supabase key belongs here—never use a service-role key.</p><button class="ghost-button" data-action="sync-now">Sync now</button></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>Private cloud sync</h2><p id="sync-account-status">Checking your secure connection…</p><label class="inline-field">Supabase project URL<input id="supabase-url" type="url" value="' + esc(config.url || '') + '" placeholder="https://your-project.supabase.co" autocomplete="url"></label><label class="inline-field">Publishable key<input id="supabase-publishable-key" type="password" value="' + esc(config.key || '') + '" placeholder="sb_publishable_…" autocomplete="off"></label><label class="inline-field">Email for your vault<input id="sync-email" type="email" placeholder="you@example.com" autocomplete="email"></label><div class="panel-actions"><button class="ghost-button" data-action="save-supabase-config">Save connection</button><button class="primary-button" data-action="send-sync-link">Email secure link</button></div><p class="muted">Use the same verified email on every device. The link establishes your account; row-level security keeps your movie records private. Only a public/publishable Supabase key belongs here—never use a service-role key.</p><div class="panel-actions"><button class="ghost-button" data-action="sync-now">Sync now</button><button class="ghost-button" data-action="upload-local-library">Upload this device's library</button></div></div>' +
       '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Sync status</h2><p id="queue-status">Checking local changes…</p><span id="sync-status-pill" class="status-pill pending">Waiting for connection</span><p id="sync-last-error" class="muted">Local changes remain saved if the device is offline. Failed cloud writes will be reported here.</p></div>' +
       '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>New titles are saved locally first, then queued for your private cloud library. Other devices receive cloud records after they verify the same email.</p><span class="status-pill local">Local-first</span></div>' +
       '<div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops, and film details can be fetched on demand and cached in this browser.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div>' +
@@ -677,6 +677,19 @@
     } catch (error) {
       console.error('[CinemaVault magic link]', error);
       toast('Could not send secure link: ' + (error?.message || error));
+    }
+  }
+
+  async function uploadLocalLibrary() {
+    if (!confirm("Upload this browser's local library to the signed-in email account? This only works when that cloud account has no movies yet.")) return;
+    try {
+      const result = await window.CinemaVaultSyncEngine.uploadLocalLibrary();
+      await loadMovies();
+      render();
+      toast(result.status === 'empty' ? 'There are no local movies to upload.' : 'Uploaded ' + result.imported + ' titles to your private cloud vault.');
+    } catch (error) {
+      console.error('[CinemaVault initial library upload]', error);
+      toast('Initial upload needs attention: ' + (error?.message || error));
     }
   }
 
