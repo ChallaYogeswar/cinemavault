@@ -29,6 +29,16 @@
     return data.session;
   }
 
+  async function signUpWithPassword(email, password) {
+    const { data, error } = await client().auth.signUp({
+      email: email.trim(),
+      password,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname }
+    });
+    if (error) throw error;
+    return { user: data.user, session: data.session };
+  }
+
   async function sendMagicLink(email) {
     const { error } = await client().auth.signInWithOtp({
       email: email.trim(),
@@ -142,6 +152,7 @@
 
     const pending = await Queue().list(Queue().STATUS.PENDING);
     let synced = 0;
+    const failed = [];
     for (const item of pending) {
       try {
         if (item.entity !== 'movie') throw new Error('Unsupported sync entity: ' + item.entity);
@@ -157,10 +168,15 @@
         synced += 1;
       } catch (error) {
         await Queue().markFailed(item.id, error);
+        failed.push({
+          id: item.entityId || item.id,
+          title: item.payload?.title || '',
+          message: error?.message || String(error)
+        });
         console.error('[CinemaVault sync] Mutation failed:', error);
       }
     }
-    return { synced, pending: false };
+    return { synced, failed, pending: false };
   }
 
   async function syncMovies() {
@@ -182,6 +198,7 @@
   return global.CinemaVaultSupabaseRepository = Object.freeze({
     getSession,
     signInWithPassword,
+    signUpWithPassword,
     sendMagicLink,
     resetPasswordForEmail,
     updatePassword,
