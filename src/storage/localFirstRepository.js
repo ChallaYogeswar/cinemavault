@@ -5,6 +5,17 @@
   const Movies = () => global.CinemaVaultMovieRepository;
   const Queue = () => global.CinemaVaultSyncQueue;
 
+  function requestSync() {
+    if (!global.navigator?.onLine) return;
+    // Queue writes remain durable even when auth/configuration is unavailable.
+    // The sync engine reports status and retries on the next online/auth event.
+    Promise.resolve().then(() => global.CinemaVaultSyncEngine?.syncSafe?.()).then(result => {
+      if (result?.status === 'synced' && typeof global.CinemaVaultAppRefresh === 'function') {
+        return global.CinemaVaultAppRefresh();
+      }
+    }).catch(error => console.warn('[CinemaVault sync]', error));
+  }
+
   async function saveMovie(input) {
     const exists = input.id ? await Movies().get(input.id) : null;
     const movie = await Movies().upsert(input);
@@ -15,6 +26,7 @@
       entityId: movie.id,
       payload: movie
     });
+    requestSync();
     return movie;
   }
 
@@ -27,6 +39,7 @@
       entityId: movieId,
       payload: metadata
     });
+    requestSync();
     return metadata;
   }
 
@@ -40,6 +53,7 @@
       entityId: id,
       payload: movie
     });
+    requestSync();
     return movie;
   }
 
