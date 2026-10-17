@@ -787,10 +787,10 @@
     $$('[data-action="genre-random"]').forEach(el=>el.addEventListener('click',genreRandom));
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
-    $('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
-    $('[data-action="save-supabase-config"]').forEach(el=>el.addEventListener('click',saveSupabaseConfig));
-    $('[data-action="send-sync-link"]').forEach(el=>el.addEventListener('click',sendSyncLink));
-    $('[data-action="sync-now"]').forEach(el=>el.addEventListener('click',syncNow));
+    $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
+    $$('[data-action="save-supabase-config"]').forEach(el=>el.addEventListener('click',saveSupabaseConfig));
+    $$('[data-action="send-sync-link"]').forEach(el=>el.addEventListener('click',sendSyncLink));
+    $$('[data-action="sync-now"]').forEach(el=>el.addEventListener('click',syncNow));
     $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
