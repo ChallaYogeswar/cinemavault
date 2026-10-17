@@ -18,6 +18,18 @@
     return movie;
   }
 
+  async function saveMetadata(movieId, input) {
+    const Metadata = () => global.CinemaVaultMetadataRepository;
+    const metadata = await Metadata().save(movieId, input);
+    await Queue().enqueue({
+      operation: 'update',
+      entity: 'movie_metadata',
+      entityId: movieId,
+      payload: metadata
+    });
+    return metadata;
+  }
+
   async function deleteMovie(id) {
     const movie = await Movies().softDelete(id);
     if (!movie) return null;
@@ -33,6 +45,7 @@
 
   return global.CinemaVaultLocalFirstRepository = Object.freeze({
     saveMovie,
+    saveMetadata,
     deleteMovie
   });
 })(window);
