@@ -226,6 +226,41 @@
     }
   }
 
+  async function uploadLocalLibrary() {
+    const instance = client();
+    if (!instance) throw new Error('Save the Supabase connection first.');
+    const session = await requireSession();
+    const { count, error } = await instance.from('movies').select('id', { count: 'exact', head: true });
+    if (error) throw error;
+    if (Number(count || 0) > 0) {
+      throw new Error('This account already has cloud movies. Use normal sync to avoid duplicating or mixing libraries.');
+    }
+
+    const localMovies = await global.CinemaVaultMovieRepository.list({ includeDeleted: false });
+    if (!localMovies.length) return { status: 'empty', pushed: 0 };
+    const queued = await global.CinemaVaultSyncQueue.list('pending');
+    const existingIds = new Set(queued.filter(row => row.entity === 'movie').map(row => row.entityId));
+    for (const movie of localMovies) {
+      if (!existingIds.has(movie.id)) {
+        await global.CinemaVaultSyncQueue.enqueue({
+          operation: 'create', entity: 'movie', entityId: movie.id, payload: movie
+        });
+      }
+      const metadata = await global.CinemaVaultMetadataRepository.get(movie.id);
+      if (metadata) {
+        const metadataQueued = queued.some(row => row.entity === 'movie_metadata' && row.entityId === movie.id);
+        if (!metadataQueued) {
+          await global.CinemaVaultSyncQueue.enqueue({
+            operation: 'create', entity: 'movie_metadata', entityId: movie.id, payload: metadata
+          });
+        }
+      }
+    }
+    const result = await syncNow();
+    if (result.status !== 'synced') throw result.error || new Error('Initial library upload did not complete.');
+    return { ...result, imported: localMovies.length, ownerId: session.user.id };
+  }
+
   function start() {
     const run = async () => {
       if (!global.CinemaVaultSupabase?.configured?.()) return { status: 'not-configured' };
@@ -259,6 +294,7 @@
   return global.CinemaVaultSyncEngine = Object.freeze({
     syncNow,
     syncSafe,
+    uploadLocalLibrary,
     start
   });
 })(window);
