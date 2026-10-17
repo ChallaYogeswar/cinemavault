@@ -338,10 +338,12 @@
   }
 
   function settingsPage() {
-    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>No account or sign-in is required for this UI-first phase. Your archive is saved locally while we focus on the cinematic interface and movie adding.</p></div></section>' +
+    const config = window.CinemaVaultSupabase?.config?.() || { url: '', key: '' };
+    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>Your library stays local until you connect your verified email. After that, the same private library can sync across devices without a visible sign-in page.</p></div></section>' +
       '<section class="settings-grid">' +
-      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>Your movie library is saved in IndexedDB in this browser. Adding, editing, ratings, and watched status stay local.</p><span class="status-pill local">Local-first</span></div>' +
-      '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Pending changes</h2><p id="queue-status">Checking local changes…</p><span class="status-pill pending">Remote sync paused</span><p class="muted">Remote account sync is paused while the UI and import flows are being stabilized. Queued changes are kept locally.</p></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>Private cloud sync</h2><p id="sync-account-status">Checking your secure connection…</p><label class="inline-field">Supabase project URL<input id="supabase-url" type="url" value="' + esc(config.url || '') + '" placeholder="https://your-project.supabase.co" autocomplete="url"></label><label class="inline-field">Publishable key<input id="supabase-publishable-key" type="password" value="' + esc(config.key || '') + '" placeholder="sb_publishable_…" autocomplete="off"></label><label class="inline-field">Email for your vault<input id="sync-email" type="email" placeholder="you@example.com" autocomplete="email"></label><div class="panel-actions"><button class="ghost-button" data-action="save-supabase-config">Save connection</button><button class="primary-button" data-action="send-sync-link">Email secure link</button></div><p class="muted">Use the same verified email on every device. The link establishes your account; row-level security keeps your movie records private. Only a public/publishable Supabase key belongs here—never use a service-role key.</p><button class="ghost-button" data-action="sync-now">Sync now</button></div>' +
+      '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Sync status</h2><p id="queue-status">Checking local changes…</p><span id="sync-status-pill" class="status-pill pending">Waiting for connection</span><p id="sync-last-error" class="muted">Local changes remain saved if the device is offline. Failed cloud writes will be reported here.</p></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>New titles are saved locally first, then queued for your private cloud library. Other devices receive cloud records after they verify the same email.</p><span class="status-pill local">Local-first</span></div>' +
       '<div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops, and film details can be fetched on demand and cached in this browser.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div>' +
       '<div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local library</h2><p>This removes CinemaVault data from this browser only. It does not delete any remote database records.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div>' +
       '</section>';
@@ -627,7 +629,75 @@
     const pending = await CinemaVaultSyncQueue.list('pending');
     const failed = await CinemaVaultSyncQueue.list('failed');
     const el = $('#queue-status');
-    if (el) el.textContent = pending.length + ' pending local change' + (pending.length===1?'':'s') + (failed.length ? ' · ' + failed.length + ' failed waiting for retry' : '') + '.';
+    if (el) el.textContent = pending.length + ' pending local change' + (pending.length===1?'':'s') + (failed.length ? ' · ' + failed.length + ' failed' : '') + '.';
+    const pill = $('#sync-status-pill');
+    const errorEl = $('#sync-last-error');
+    const accountEl = $('#sync-account-status');
+    const configured = window.CinemaVaultSupabase?.configured?.();
+    let session = null;
+    try { if (configured) session = await window.CinemaVaultSupabase.session(); } catch (error) {
+      if (errorEl) errorEl.textContent = 'Supabase session error: ' + (error?.message || error);
+    }
+    const syncState = await CinemaVaultSyncStateRepository.get('default');
+    if (accountEl) accountEl.textContent = !configured
+      ? 'Add your Supabase publishable key to enable private cloud sync.'
+      : session?.user ? 'Connected as ' + (session.user.email || 'verified account') + '.'
+      : 'Connection saved. Verify your email to enable cross-device sync.';
+    if (pill) {
+      pill.textContent = !configured ? 'Setup required' : !session?.user ? 'Email verification required' : failed.length ? 'Sync needs attention' : pending.length ? 'Changes waiting' : 'Connected';
+      pill.className = 'status-pill ' + (!configured || !session?.user ? 'pending' : failed.length ? 'pending' : 'local');
+    }
+    if (errorEl && syncState?.lastError) errorEl.textContent = 'Last sync error: ' + syncState.lastError;
+    else if (errorEl && session?.user && !failed.length && !pending.length) errorEl.textContent = 'Your private library is up to date on this device.';
+    else if (errorEl && !session?.user) errorEl.textContent = 'Your changes remain local until you verify the same email used on your other devices.';
+  }
+
+  async function saveSupabaseConfig() {
+    try {
+      const url = $('#supabase-url')?.value.trim();
+      const key = $('#supabase-publishable-key')?.value.trim();
+      window.CinemaVaultSupabase.saveConfig(url, key);
+      toast('Supabase connection saved on this device.');
+      await updateQueueStatus();
+    } catch (error) {
+      toast('Could not save connection: ' + (error?.message || error));
+    }
+  }
+
+  async function sendSyncLink() {
+    try {
+      const url = $('#supabase-url')?.value.trim();
+      const key = $('#supabase-publishable-key')?.value.trim();
+      window.CinemaVaultSupabase.saveConfig(url, key);
+      const email = $('#sync-email')?.value.trim();
+      await window.CinemaVaultSupabase.sendMagicLink(email);
+      toast('Secure link sent. Check your email, then open it on this device.');
+      const account = $('#sync-account-status');
+      if (account) account.textContent = 'Secure link sent to ' + email + '. Open it to connect this device.';
+    } catch (error) {
+      console.error('[CinemaVault magic link]', error);
+      toast('Could not send secure link: ' + (error?.message || error));
+    }
+  }
+
+  async function syncNow() {
+    try {
+      const result = await window.CinemaVaultSyncEngine.syncSafe();
+      if (result.status === 'synced') {
+        await loadMovies();
+        render();
+        toast('Cloud sync complete.');
+      } else if (result.status === 'signed-out') {
+        toast('Verify your email first to sync across devices.');
+      } else if (result.status === 'not-configured') {
+        toast('Save your Supabase connection first.');
+      } else {
+        toast('Sync needs attention: ' + (result.error?.message || result.status));
+      }
+      await updateQueueStatus();
+    } catch (error) {
+      toast('Sync failed: ' + (error?.message || error));
+    }
   }
 
   function saveKey() {
@@ -704,7 +774,10 @@
     $$('[data-action="genre-random"]').forEach(el=>el.addEventListener('click',genreRandom));
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
-    $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
+    $('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
+    $('[data-action="save-supabase-config"]').forEach(el=>el.addEventListener('click',saveSupabaseConfig));
+    $('[data-action="send-sync-link"]').forEach(el=>el.addEventListener('click',sendSyncLink));
+    $('[data-action="sync-now"]').forEach(el=>el.addEventListener('click',syncNow));
     $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
@@ -725,6 +798,8 @@
     await CinemaVaultSyncQueue.resetProcessing();
     await loadMovies();
     render();
+    // Resume cloud sync after the initial local UI is ready; no separate login page is shown.
+    void window.CinemaVaultSyncEngine?.start?.();
     window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
     window.addEventListener('scroll',()=>document.body.classList.toggle('scrolled',window.scrollY>28),{passive:true});
   }
