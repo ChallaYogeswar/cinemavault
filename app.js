@@ -361,7 +361,7 @@
     reveal();
     if (state.route === 'home') renderHomeRecommendation();
     if (state.route === 'discover') { renderDiscoverRecommendation(); renderHistory(); }
-    if (state.route === 'settings') { updateQueueStatus(); updateSyncStatus(); }
+    if (state.route === 'settings') updateQueueStatus();
     enrichCards();
     preloadHero();
   }
@@ -630,62 +630,6 @@
     if (el) el.textContent = pending.length + ' pending local change' + (pending.length===1?'':'s') + (failed.length ? ' · ' + failed.length + ' failed waiting for retry' : '') + '.';
   }
 
-  async function updateSyncStatus() {
-    const el = $('#sync-status');
-    if (!el) return;
-    if (!window.CinemaVaultSupabase?.configured?.()) {
-      el.textContent = 'Not configured — CinemaVault is running fully locally.';
-      return;
-    }
-    try {
-      const session = await window.CinemaVaultSupabase.session();
-      el.textContent = session?.user ? 'Connected as ' + (session.user.email || session.user.id) + '.' : 'Connected to Supabase, but no user is signed in.';
-    } catch (error) {
-      el.textContent = 'Supabase connection error: ' + error.message;
-    }
-  }
-
-  async function saveSupabase() {
-    try {
-      window.CinemaVaultSupabase.saveConfig($('#supabase-url').value, $('#supabase-key').value);
-      await updateSyncStatus();
-      toast('Supabase connection saved locally.');
-    } catch (error) {
-      toast(error.message);
-    }
-  }
-
-  async function supabaseAuth(action) {
-    try {
-      if (!window.CinemaVaultSupabase.configured()) throw new Error('Save the Supabase connection first.');
-      const email = $('#supabase-email').value.trim();
-      const password = $('#supabase-password').value;
-      if (!email || !password) throw new Error('Email and password are required.');
-      const result = action === 'signup'
-        ? await window.CinemaVaultSupabase.signUp(email, password)
-        : await window.CinemaVaultSupabase.signIn(email, password);
-      if (result.session) toast(action === 'signup' ? 'Account created and signed in.' : 'Signed in.');
-      else toast('Account created. Check your email if confirmation is enabled.');
-      await updateSyncStatus();
-    } catch (error) {
-      toast(error.message);
-    }
-  }
-
-  async function runSupabaseSync() {
-    toast('Synchronizing local changes…');
-    const result = await window.CinemaVaultSyncEngine.syncSafe();
-    if (result.status === 'synced') {
-      await loadMovies();
-      render();
-      toast('✓ Local vault synchronized.');
-    } else if (result.status === 'not-configured') {
-      toast('Configure Supabase first.');
-    } else {
-      toast('Sync failed: ' + (result.error?.message || 'unknown error'));
-    }
-  }
-
   function saveKey() {
     const value = $('#tmdb-key')?.value.trim() || '';
     if (value) localStorage.setItem('cv3_tmdb_key', value);
@@ -761,10 +705,6 @@
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
     $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
-    $$('[data-action="save-supabase"]').forEach(el=>el.addEventListener('click',saveSupabase));
-    $$('[data-action="supabase-signin"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signin')));
-    $$('[data-action="supabase-signup"]').forEach(el=>el.addEventListener('click',()=>supabaseAuth('signup')));
-    $$('[data-action="supabase-sync"]').forEach(el=>el.addEventListener('click',runSupabaseSync));
     $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
@@ -787,7 +727,6 @@
     render();
     window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
     window.addEventListener('scroll',()=>document.body.classList.toggle('scrolled',window.scrollY>28),{passive:true});
-    if (window.CinemaVaultSyncEngine) window.CinemaVaultSyncEngine.start();
   }
 
   boot().catch(error=>{
