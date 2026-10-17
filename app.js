@@ -216,7 +216,7 @@
       '</header>' +
       '<main id="main-content">' + content + '</main>' +
       '<footer class="footer"><span>Private cinema archive</span><span>' + remaining + ' unwatched</span></footer>' +
-      '<div class="mobile-nav">' + navItem('home','⌂') + navItem('library','▦') + navItem('discover','✦') + navItem('genres','◈') + navItem('stats','◌') + '</div>' +
+      '<div class="mobile-nav" aria-label="Main navigation">' + navItem('home','Home') + navItem('library','Library') + navItem('discover','Discover') + navItem('genres','Genres') + navItem('stats','Stats') + '</div>' +
       '<div id="search-layer" class="overlay-layer" hidden></div>' +
       '<div id="detail-layer" class="overlay-layer" hidden></div>' +
     '</div>';
@@ -531,9 +531,13 @@
       const normalizedLine = line.replace(/[•·]/g, ' · ').replace(/\s+/g, ' ').trim();
       const yearMatch = normalizedLine.match(/\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/);
       const year = yearMatch ? Number(yearMatch[1]) : null;
-      const runtimeMatch = normalizedLine.match(/\b(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\b/i);
-      const runtime = runtimeMatch && (runtimeMatch[1] || runtimeMatch[2])
-        ? Number(runtimeMatch[1] || 0) * 60 + Number(runtimeMatch[2] || 0) : null;
+      const runtimeMatch = normalizedLine.match(/(?:(\d+)\s*h)?\s*(\d+)\s*m\b/i)
+        || normalizedLine.match(/\b(\d+)\s*h\b/i);
+      const runtime = runtimeMatch
+        ? (runtimeMatch[2] != null
+          ? Number(runtimeMatch[1] || 0) * 60 + Number(runtimeMatch[2])
+          : Number(runtimeMatch[1]) * 60)
+        : null;
       let title = normalizedLine.split(/\s+[|—–-]\s+/)[0].trim();
       if (title.includes(' · ')) title = title.split(' · ')[0].trim();
       // Clean imports such as "Kala . CBFC: A 2021 · Action/Thriller · 2h 10m".
@@ -720,7 +724,13 @@
     try {
       await CinemaVaultSupabaseRepository.signInWithOAuth(provider);
     } catch (error) {
-      if (message) { message.className = 'auth-error'; message.textContent = error?.message || 'OAuth sign-in failed.'; }
+      const detail = error?.message || 'OAuth sign-in failed.';
+      if (message) {
+        message.className = 'auth-error';
+        message.textContent = /provider is not enabled|unsupported provider/i.test(detail)
+          ? (provider === 'google' ? 'Google' : 'GitHub') + ' sign-in is not enabled in Supabase yet. In Supabase, open Authentication → Sign In / Providers, enable this provider, add its OAuth credentials, and allow the CinemaVault redirect URLs.'
+          : detail;
+      }
       buttons.forEach(button => { button.disabled = false; });
     }
   }
