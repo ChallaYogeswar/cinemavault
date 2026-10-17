@@ -164,7 +164,26 @@
     }
   }
 
+  let activeSync = null;
+  let rerunRequested = false;
+
   async function syncNow() {
+    if (activeSync) {
+      rerunRequested = true;
+      return activeSync;
+    }
+    activeSync = (async () => {
+      let result;
+      do {
+        rerunRequested = false;
+        result = await syncNowInternal();
+      } while (rerunRequested);
+      return result;
+    })();
+    try { return await activeSync; } finally { activeSync = null; }
+  }
+
+  async function syncNowInternal() {
     const instance = client();
     if (!instance) return { status: 'not-configured', pushed: 0, pulled: 0 };
 
@@ -178,6 +197,11 @@
 
     const newest = await pullMovies(instance, previous?.cursor || null);
     await pullMetadata(instance);
+    const failedAfterPush = await global.CinemaVaultSyncQueue.list('failed');
+    if (failedAfterPush.length) {
+      const lastError = failedAfterPush[failedAfterPush.length - 1]?.lastError || 'One or more queued changes could not be saved.';
+      throw new Error(failedAfterPush.length + ' cloud change(s) failed. ' + lastError);
+    }
 
     await global.CinemaVaultSyncStateRepository.save({
       id: 'default',
@@ -202,6 +226,41 @@
     }
   }
 
+  async function uploadLocalLibrary() {
+    const instance = client();
+    if (!instance) throw new Error('Save the Supabase connection first.');
+    const session = await requireSession();
+    const { count, error } = await instance.from('movies').select('id', { count: 'exact', head: true });
+    if (error) throw error;
+    if (Number(count || 0) > 0) {
+      throw new Error('This account already has cloud movies. Use normal sync to avoid duplicating or mixing libraries.');
+    }
+
+    const localMovies = await global.CinemaVaultMovieRepository.list({ includeDeleted: false });
+    if (!localMovies.length) return { status: 'empty', pushed: 0 };
+    const queued = await global.CinemaVaultSyncQueue.list('pending');
+    const existingIds = new Set(queued.filter(row => row.entity === 'movie').map(row => row.entityId));
+    for (const movie of localMovies) {
+      if (!existingIds.has(movie.id)) {
+        await global.CinemaVaultSyncQueue.enqueue({
+          operation: 'create', entity: 'movie', entityId: movie.id, payload: movie
+        });
+      }
+      const metadata = await global.CinemaVaultMetadataRepository.get(movie.id);
+      if (metadata) {
+        const metadataQueued = queued.some(row => row.entity === 'movie_metadata' && row.entityId === movie.id);
+        if (!metadataQueued) {
+          await global.CinemaVaultSyncQueue.enqueue({
+            operation: 'create', entity: 'movie_metadata', entityId: movie.id, payload: metadata
+          });
+        }
+      }
+    }
+    const result = await syncNow();
+    if (result.status !== 'synced') throw result.error || new Error('Initial library upload did not complete.');
+    return { ...result, imported: localMovies.length, ownerId: session.user.id };
+  }
+
   function start() {
     const run = async () => {
       if (!global.CinemaVaultSupabase?.configured?.()) return { status: 'not-configured' };
@@ -219,14 +278,23 @@
     };
 
     window.addEventListener('online', () => { void run(); });
+    // The magic-link callback creates a Supabase session without a dedicated login page.
+    if (!start.authListenerAttached && global.CinemaVaultSupabase?.onAuthStateChange) {
+      start.authListenerAttached = true;
+      global.CinemaVaultSupabase.onAuthStateChange((event, session) => {
+        if (session?.user && ['SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED'].includes(event)) {
+          void run();
+        }
+      });
+    }
     // Pull remote records on startup for an already-configured, signed-in user.
-    if (global.navigator?.onLine) void run();
-    return run;
+    return global.navigator?.onLine ? run() : Promise.resolve({ status: 'offline' });
   }
 
   return global.CinemaVaultSyncEngine = Object.freeze({
     syncNow,
     syncSafe,
+    uploadLocalLibrary,
     start
   });
 })(window);
