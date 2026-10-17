@@ -523,19 +523,43 @@
   }
 
   function parseBulkText(text) {
-    return text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{
-      const parts = line.split(/\s+[|—–-]\s+/);
-      const title = (parts[0] || line).trim();
-      const yearMatch = line.match(/\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/);
+    return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+      // Accept the common archive formats:
+      // Title | Year | Genre | 2h 10m
+      // Title — Year · Genre · 2h 10m
+      // Title . Source Year · Genre · 2h 10m
+      const normalizedLine = line.replace(/[•·]/g, ' · ').replace(/\s+/g, ' ').trim();
+      const yearMatch = normalizedLine.match(/\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/);
+      const year = yearMatch ? Number(yearMatch[1]) : null;
+      const runtimeMatch = normalizedLine.match(/\b(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\b/i);
+      const runtime = runtimeMatch && (runtimeMatch[1] || runtimeMatch[2])
+        ? Number(runtimeMatch[1] || 0) * 60 + Number(runtimeMatch[2] || 0) : null;
+      let title = normalizedLine.split(/\s+[|—–-]\s+/)[0].trim();
+      if (title.includes(' · ')) title = title.split(' · ')[0].trim();
+      // Clean imports such as "Kala . CBFC: A 2021 · Action/Thriller · 2h 10m".
+      title = title.replace(/\s*[.:]\s*(?:(?:CBFC|Censor|Certificate|Source)\b.*)?$/i, '').trim();
+      if (yearMatch) {
+        const beforeYear = normalizedLine.slice(0, yearMatch.index).trim();
+        if (beforeYear && /[.:]\s*(?:CBFC|Censor|Certificate|Source)\b/i.test(beforeYear)) {
+          title = beforeYear.split(/[.:]\s*(?:CBFC|Censor|Certificate|Source)\b/i)[0].trim();
+        } else if (!/[|—–-]/.test(title) && title.length > 0 && title.match(/\s[.:]\s/)) {
+          title = title.split(/\s[.:]\s/)[0].trim();
+        }
+      }
+      const afterYear = yearMatch ? normalizedLine.slice(yearMatch.index + yearMatch[0].length).replace(/^\s*[|—–·.:]\s*/, '') : '';
+      const parts = normalizedLine.split(/\s+[|—–]\s+|\s+·\s+/).map(part => part.trim()).filter(Boolean);
+      const genre = parts.find(part => /[A-Za-z].*\//.test(part) && !/\b(?:CBFC|Censor|Certificate|Source)\b/i.test(part)) || '';
+      const mediaType = /\b(series|show|tv)\b/i.test(normalizedLine) ? 'tv' : 'movie';
       return {
         id: uid(),
-        title: title.replace(/\s*\((Series|Show|TV)\)\s*/i,'').trim(),
-        year: yearMatch ? Number(yearMatch[1]) : null,
-        media_type: /\b(series|show|tv)\b/i.test(line) ? 'tv' : 'movie',
-        genre: parts[1] && !/^\d{4}$/.test(parts[1]) ? parts[1].trim() : '',
+        title: title.replace(/\s*\((Series|Show|TV)\)\s*/i, '').trim(),
+        year,
+        media_type: mediaType,
+        genre,
+        runtime_minutes: runtime || null,
         watched: false
       };
-    });
+    }).filter(item => item.title);
   }
 
   async function parseBulk() {
@@ -567,10 +591,19 @@
     if (status) status.textContent = 'Saving ' + items.length + ' titles locally and syncing…';
     try {
       await CinemaVaultLocalFirstRepository.saveMovies(items);
-      await CinemaVaultSupabaseRepository.flushQueue();
+      const syncResult = await CinemaVaultSupabaseRepository.flushQueue();
+      if (syncResult.pending) throw new Error('Sign in again before syncing these titles to your private library.');
+      if (syncResult.failed?.length) {
+        const details = syncResult.failed.slice(0, 3).map(item => item.message || item.title || item.id).join('; ');
+        throw new Error(syncResult.failed.length + ' record(s) failed to save to Supabase. ' + details);
+      }
+      const remote = await CinemaVaultSupabaseRepository.fetchAllMovies();
+      const remoteIds = new Set(remote.rows.map(row => row.id));
+      const missing = items.filter(item => !remoteIds.has(item.id));
+      if (missing.length) throw new Error('Supabase confirmed only part of the import: ' + missing.length + ' of ' + items.length + ' titles are not present remotely.');
       await loadMovies();
-      if (status) status.textContent = 'Added ' + items.length + ' titles. Sync completed; refresh to verify persistence.';
-      toast('✓ ' + items.length + ' titles added.');
+      if (status) status.textContent = 'Verified: ' + items.length + ' titles saved to Supabase. Remote library now contains ' + remote.rows.filter(row => !row.deleted_at).length + ' titles.';
+      toast('✓ ' + items.length + ' titles saved and verified in Supabase.');
       state.route='library';
       render();
     } catch (error) {
@@ -726,9 +759,42 @@
   function renderAuthGate(errorMessage = '', successMessage = '') {
     const app = $('#app');
     if (!app) return;
-    app.innerHTML = '<main class="auth-gate"><section class="auth-panel"><div class="auth-brand"><span class="auth-brand-mark">CV</span><span>CinemaVault</span></div><p class="eyebrow">YOUR PRIVATE CINEMA</p><h1>Your archive awaits.</h1><p>Sign in to load your private movie collection from Supabase. Your library is never made public.</p><div class="auth-provider-row"><button class="ghost-button" id="google-login-button" type="button">Continue with Google</button><button class="ghost-button" id="github-login-button" type="button">Continue with GitHub</button></div><form id="auth-form" class="auth-form"><label>Email address<input id="auth-email" type="email" autocomplete="email" required placeholder="you@example.com"></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required placeholder="Your account password"></label><button class="primary-button" type="submit">Sign in to CinemaVault</button><button class="ghost-button" id="reset-password-button" type="button">Forgot password?</button><button class="ghost-button" id="magic-link-button" type="button">Email me a sign-in link</button></form><div id="auth-message" class="' + (errorMessage ? 'auth-error' : 'auth-success') + '">' + esc(errorMessage || successMessage) + '</div><p class="auth-footnote">Use the existing Supabase account that owns your movie library. No new account is created by the email-link option.</p></section></main>';
+    app.innerHTML = '<main class="auth-gate"><section class="auth-panel"><div class="auth-brand"><span class="auth-brand-mark">CV</span><span>CinemaVault</span></div><p class="eyebrow">YOUR PRIVATE CINEMA</p><h1>Your archive awaits.</h1><p>Sign in to load your private movie collection from Supabase. Your library is never made public.</p><div class="auth-provider-row"><button class="ghost-button" id="google-login-button" type="button">Continue with Google</button><button class="ghost-button" id="github-login-button" type="button">Continue with GitHub</button></div><form id="auth-form" class="auth-form"><label>Email address<input id="auth-email" type="email" autocomplete="email" required placeholder="you@example.com"></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required placeholder="Your account password"></label><button class="primary-button" type="submit">Sign in to CinemaVault</button><button class="ghost-button" id="create-account-button" type="button">Create new account</button><button class="ghost-button" id="reset-password-button" type="button">Forgot password?</button><button class="ghost-button" id="magic-link-button" type="button">Email me a sign-in link</button></form><div id="auth-message" class="' + (errorMessage ? 'auth-error' : 'auth-success') + '">' + esc(errorMessage || successMessage) + '</div><p class="auth-footnote">Sign in with the account that owns your existing library. Creating a new account creates a separate, empty private library; it will not expose another account's movies.</p></section></main>';
     $('#google-login-button')?.addEventListener('click', () => oauthLogin('google'));
     $('#github-login-button')?.addEventListener('click', () => oauthLogin('github'));
+    $('#create-account-button')?.addEventListener('click', async event => {
+      const email = $('#auth-email').value.trim();
+      const password = $('#auth-password').value;
+      const message = $('#auth-message');
+      if (!email || !password) {
+        message.className = 'auth-error';
+        message.textContent = 'Enter an email address and a password of at least 8 characters.';
+        return;
+      }
+      if (password.length < 8) {
+        message.className = 'auth-error';
+        message.textContent = 'Use a password with at least 8 characters.';
+        return;
+      }
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = 'Creating account…';
+      try {
+        const result = await CinemaVaultSupabaseRepository.signUpWithPassword(email, password);
+        if (result?.session) {
+          await startVault();
+        } else {
+          message.className = 'auth-success';
+          message.textContent = 'Account created. Check your email to confirm it, then return here to sign in.';
+        }
+      } catch (error) {
+        message.className = 'auth-error';
+        message.textContent = error?.message || 'Could not create account.';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Create new account';
+      }
+    });
     $('#reset-password-button')?.addEventListener('click', async () => {
       const email = $('#auth-email').value.trim();
       const message = $('#auth-message');
@@ -815,10 +881,21 @@
   }
 
   async function boot() {
+    const url = new URL(window.location.href);
+    const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+    const recoveryError = hashParams.get('error_description') || hashParams.get('error') || '';
+    const resetRequested = url.searchParams.get('auth') === 'reset-password'
+      || hashParams.get('type') === 'recovery'
+      || hashParams.has('access_token');
     const session = await CinemaVaultSupabaseRepository.getSession();
-    if (new URLSearchParams(window.location.search).get('auth') === 'reset-password') {
+
+    if (recoveryError) {
+      renderAuthGate('The password-reset link could not be verified (' + recoveryError.replace(/\+/g, ' ') + '). Request a fresh reset email and open the newest message only once.');
+      return;
+    }
+    if (resetRequested) {
       if (!session) {
-        renderAuthGate('The reset link is invalid or expired. Request a new password-reset email.');
+        renderAuthGate('This reset link is expired or not verified. Request a fresh reset email, then open the newest message.');
         return;
       }
       renderPasswordReset();
