@@ -1,0 +1,6 @@
+# Local agent and MCP configuration
+/.agents/
+/.claude/
+/.mcp.json
+/.vscode/mcp.json
+/skills-lock.json
