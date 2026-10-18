@@ -21,7 +21,9 @@
     metadata: new Map(),
     recommendation: null,
     migrated: false,
-    libraryVisible: 60
+    libraryVisible: 60,
+    cloud: { status: 'unknown', error: '' },
+    bulkItems: []
   };
 
   function toast(message, duration = 2800) {
@@ -223,6 +225,7 @@
         '</nav>' +
         '<div class="top-actions"><button class="icon-button" data-action="search" aria-label="Search">⌕</button><button class="add-button" data-route="add">+ <span>Add</span></button><button class="menu-button" data-action="menu" aria-label="Open menu">☰</button></div>' +
       '</header>' +
+      '<div id="cloud-banner" class="cloud-banner" hidden></div>' +
       '<main id="main-content">' + content + '</main>' +
       '<footer class="footer"><span>Private cinema archive</span><span>' + remaining + ' unwatched</span></footer>' +
       '<div class="mobile-nav">' + navItem('home','⌂') + navItem('library','▦') + navItem('discover','✦') + navItem('genres','◈') + navItem('stats','◌') + '</div>' +
@@ -349,6 +352,43 @@
       '</section>';
   }
 
+  function setCloud(result) {
+    if (!result) return;
+    const status = result.status;
+    if (status === 'synced') state.cloud = { status: 'synced', error: '' };
+    else if (status === 'signed-out') state.cloud = { status: 'signed-out', error: '' };
+    else if (status === 'error') state.cloud = { status: 'error', error: String(result.error?.message || result.error || 'Sync failed') };
+    else return;
+    updateBanner();
+  }
+
+  function updateBanner() {
+    const el = $('#cloud-banner');
+    if (!el) return;
+    const { status, error } = state.cloud;
+    if (status === 'signed-out') {
+      el.hidden = false;
+      el.innerHTML = '<div><b>Not signed in — your cloud library is not loaded.</b><span>New titles are saved on this device only until you sign in. Enter your email to get a secure link.</span></div>' +
+        '<form id="banner-signin"><input id="banner-email" type="email" required placeholder="you@example.com" autocomplete="email"><button class="primary-button" type="submit">Email secure link</button></form>';
+      $('#banner-signin')?.addEventListener('submit', async e => {
+        e.preventDefault();
+        try {
+          await window.CinemaVaultSupabase.sendMagicLink($('#banner-email').value);
+          toast('Secure link sent — open it on this device to finish signing in.', 6000);
+        } catch (err) { toast('Could not send link: ' + (err?.message || err), 6000); }
+      });
+    } else if (status === 'error') {
+      el.hidden = false;
+      el.innerHTML = '<div><b>Cloud sync needs attention.</b><span>' + esc(error) + ' Your changes are safe on this device.</span></div><button class="ghost-button" data-banner="retry">Retry sync</button>';
+      $('[data-banner="retry"]', el)?.addEventListener('click', () => syncNow());
+    } else {
+      el.hidden = true;
+      el.innerHTML = '';
+    }
+  }
+
+  window.CinemaVaultOnSyncResult = setCloud;
+
   function render() {
     let content = '';
     if (state.route === 'home') content = homePage();
@@ -360,6 +400,7 @@
     else if (state.route === 'settings') content = settingsPage();
     $('#app').innerHTML = shell(content);
     bind();
+    updateBanner();
     reveal();
     if (state.route === 'home') renderHomeRecommendation();
     if (state.route === 'discover') { renderDiscoverRecommendation(); renderHistory(); }
@@ -592,30 +633,41 @@
     const raw = $('#bulk-input').value.trim();
     if (!raw) return toast('Paste some titles first.');
     const parsed = parseBulkText(raw);
+    const key = m => [m.normalized_title || CinemaVaultMovieRepository.normalizeTitle(m.title), m.media_type, m.year ?? ''].join('|');
+    // One pass over the existing library (not one database scan per line), and de-dupe within the paste itself.
+    const seen = new Set((await CinemaVaultMovieRepository.list({ includeDeleted: false })).map(key));
     const fresh = [];
     for (const item of parsed) {
-      const duplicate = await CinemaVaultMovieRepository.findDuplicate(item);
-      if (!duplicate) fresh.push(item);
+      const k = key(item);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      fresh.push(item);
     }
+    state.bulkItems = fresh;
     $('#bulk-status').textContent = fresh.length + ' new of ' + parsed.length + ' parsed.';
     $('#bulk-preview').innerHTML = fresh.slice(0,20).map(m=>'<div class="preview-row"><b>'+esc(m.title)+'</b><span>'+esc([m.year,m.genre,m.media_type].filter(Boolean).join(' · '))+'</span></div>').join('') + (fresh.length>20?'<p class="muted">+'+(fresh.length-20)+' more</p>':'');
-    $('#bulk-preview').dataset.items = JSON.stringify(fresh);
-    if (fresh.length) $('#bulk-preview').insertAdjacentHTML('beforeend','<button class="primary-button" data-action="add-parsed">Add '+fresh.length+' titles</button>');
+    if (fresh.length) {
+      $('#bulk-preview').insertAdjacentHTML('beforeend','<button class="primary-button" data-action="add-parsed">Add '+fresh.length+' titles</button>');
+      $$('[data-action="add-parsed"]').forEach(el=>el.addEventListener('click',addParsed));
+    }
   }
 
   async function addParsed() {
+    const btn = $('[data-action="add-parsed"]');
     try {
-      let items = [];
-      try { items = JSON.parse($('#bulk-preview').dataset.items || '[]'); } catch (_) {}
+      const items = state.bulkItems || [];
       if (!items.length) return;
-      for (const item of items) await CinemaVaultLocalFirstRepository.saveMovie(item);
+      if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+      await CinemaVaultLocalFirstRepository.saveMovies(items);
+      state.bulkItems = [];
       await loadMovies();
       toast('✓ ' + items.length + ' titles added.');
       state.route='library';
       render();
     } catch (error) {
       console.error('[CinemaVault addParsed]', error);
-      toast('Could not add titles: ' + (error?.message || 'unknown error'));
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry add'; }
+      toast('Could not add titles: ' + (error?.message || 'unknown error'), 6000);
     }
   }
 
@@ -695,7 +747,8 @@
 
   async function syncNow() {
     try {
-      const result = await window.CinemaVaultSyncEngine.syncSafe();
+      const result = await window.CinemaVaultSyncEngine.syncSafe({ retryFailed: true });
+      setCloud(result);
       if (result.status === 'synced') {
         await loadMovies();
         render();
@@ -803,7 +856,7 @@
   // Let the sync engine refresh UI state after remote records have been pulled.
   window.CinemaVaultAppRefresh = async function () {
     await loadMovies();
-    render();
+    if (state.route !== 'add') render();
   };
 
   async function boot() {
@@ -812,7 +865,7 @@
     await loadMovies();
     render();
     // Resume cloud sync after the initial local UI is ready; no separate login page is shown.
-    void window.CinemaVaultSyncEngine?.start?.();
+    void window.CinemaVaultSyncEngine?.start?.()?.then(setCloud);
     window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
     window.addEventListener('scroll',()=>document.body.classList.toggle('scrolled',window.scrollY>28),{passive:true});
   }

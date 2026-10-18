@@ -26,7 +26,7 @@
       runtime_minutes: movie.runtime_minutes,
       watched: movie.watched,
       watched_on: movie.watched_on,
-      user_rating: movie.user_rating,
+      user_rating: movie.user_rating == null ? null : Math.min(5, Math.max(0, Number(movie.user_rating))),
       verdict: movie.verdict,
       technical_notes: movie.technical_notes,
       shot_link: movie.shot_link,
@@ -91,74 +91,138 @@
     return session;
   }
 
-  async function pushQueue(instance, userId) {
-    const pending = await global.CinemaVaultSyncQueue.list('pending');
-    const failed = await global.CinemaVaultSyncQueue.list('failed');
-    const queue = pending.concat(failed.filter(row => row.retryCount < 5)
-      .map(row => ({ ...row, status: 'pending' })));
+  const PUSH_CHUNK = 200;
+  const MAX_RETRIES = 5;
 
+  function identityMatch(query, movie) {
+    query = query.eq('normalized_title', movie.normalized_title).eq('media_type', movie.media_type).is('deleted_at', null);
+    return movie.year == null ? query.is('year', null) : query.eq('year', movie.year);
+  }
+
+  // The database enforces one live row per (owner, title, type, year). If this device created a
+  // title the cloud already has under another id, adopt the cloud row instead of failing forever.
+  async function adoptRemoteDuplicate(instance, userId, movie) {
+    const { data, error } = await identityMatch(
+      instance.from('movies').select('*').eq('owner_id', userId), movie
+    ).limit(1);
+    if (error || !data?.length) return false;
+    const remote = data[0];
+    if (remote.id !== movie.id) {
+      await global.CinemaVaultDB.remove(global.CinemaVaultDB.STORES.MOVIES, movie.id);
+      await global.CinemaVaultDB.put(global.CinemaVaultDB.STORES.MOVIES, remoteToMovie(remote));
+    }
+    return true;
+  }
+
+  async function pushQueue(instance, userId, options = {}) {
+    const Queue = global.CinemaVaultSyncQueue;
+    const pending = await Queue.list('pending');
+    const failed = (await Queue.list('failed')).filter(row => options.retryFailed || row.retryCount < MAX_RETRIES);
+    const queue = pending.concat(failed).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+
+    // Collapse repeated edits of one record into its newest state.
+    const latestMovie = new Map();
+    const latestMeta = new Map();
+    const superseded = [];
     for (const item of queue) {
-      await global.CinemaVaultSyncQueue.update(item.id, { status: 'processing' });
-      try {
-        if (item.entity === 'movie') {
-          const payload = movieToRemote(item.payload, userId);
-          const { error } = await instance.from('movies').upsert(payload, { onConflict: 'id' });
-          if (error) throw error;
-        } else if (item.entity === 'movie_metadata') {
-          const payload = metadataToRemote(item.payload);
-          const { error } = await instance.from('movie_metadata').upsert(payload, { onConflict: 'movie_id' });
-          if (error) throw error;
-        } else {
-          throw new Error('Unsupported sync entity: ' + item.entity);
+      const map = item.entity === 'movie' ? latestMovie : item.entity === 'movie_metadata' ? latestMeta : null;
+      if (!map) { await Queue.markFailed(item.id, new Error('Unsupported sync entity: ' + item.entity)); continue; }
+      if (map.has(item.entityId)) superseded.push(map.get(item.entityId));
+      map.set(item.entityId, item);
+    }
+    for (const old of superseded) await Queue.acknowledge(old.id);
+
+    const movieItems = [...latestMovie.values()];
+    for (let i = 0; i < movieItems.length; i += PUSH_CHUNK) {
+      const chunk = movieItems.slice(i, i + PUSH_CHUNK);
+      const rows = chunk.map(item => movieToRemote(item.payload, userId));
+      const { error } = await instance.from('movies').upsert(rows, { onConflict: 'id' });
+      if (!error) { for (const item of chunk) await Queue.acknowledge(item.id); continue; }
+
+      // Find which record(s) the database rejected.
+      for (const item of chunk) {
+        try {
+          const { error: oneError } = await instance.from('movies').upsert(movieToRemote(item.payload, userId), { onConflict: 'id' });
+          if (oneError) {
+            if (oneError.code === '23505' && await adoptRemoteDuplicate(instance, userId, item.payload)) {
+              await Queue.acknowledge(item.id);
+              continue;
+            }
+            throw oneError;
+          }
+          await Queue.acknowledge(item.id);
+        } catch (err) {
+          await Queue.markFailed(item.id, err);
         }
-        await global.CinemaVaultSyncQueue.acknowledge(item.id);
-      } catch (error) {
-        await global.CinemaVaultSyncQueue.markFailed(item.id, error);
+      }
+    }
+
+    const metaItems = [...latestMeta.values()];
+    for (let i = 0; i < metaItems.length; i += PUSH_CHUNK) {
+      const chunk = metaItems.slice(i, i + PUSH_CHUNK);
+      const { error } = await instance.from('movie_metadata')
+        .upsert(chunk.map(item => metadataToRemote(item.payload)), { onConflict: 'movie_id' });
+      if (!error) { for (const item of chunk) await Queue.acknowledge(item.id); continue; }
+      for (const item of chunk) {
+        const { error: oneError } = await instance.from('movie_metadata')
+          .upsert(metadataToRemote(item.payload), { onConflict: 'movie_id' });
+        if (oneError) await Queue.markFailed(item.id, oneError); else await Queue.acknowledge(item.id);
       }
     }
   }
 
   async function pullMovies(instance, cursor) {
+    const DB = global.CinemaVaultDB;
     let from = 0;
     let newest = cursor || null;
+    let changed = 0;
+
+    // A cleared browser must re-download everything, whatever the saved cursor says.
+    const localCount = (await DB.getAll(DB.STORES.MOVIES)).length;
+    if (!localCount) { cursor = null; newest = null; }
 
     while (true) {
-      let query = instance.from('movies').select('*').order('updated_at', { ascending: true }).range(from, from + PAGE_SIZE - 1);
-      if (cursor) query = query.gt('updated_at', cursor);
+      let query = instance.from('movies').select('*')
+        .order('updated_at', { ascending: true }).order('id', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (cursor) query = query.gte('updated_at', cursor);
       const { data, error } = await query;
       if (error) throw error;
       if (!data?.length) break;
 
-      for (const row of data) {
-        const local = await global.CinemaVaultMovieRepository.get(row.id);
+      const locals = await DB.getMany(DB.STORES.MOVIES, data.map(row => row.id));
+      const writes = [];
+      data.forEach((row, index) => {
+        const local = locals[index];
         const remoteUpdated = Date.parse(row.updated_at || '') || 0;
         const localUpdated = Date.parse(local?.updatedAt || '') || 0;
-        if (!local || remoteUpdated >= localUpdated) {
-          await global.CinemaVaultDB.put(global.CinemaVaultDB.STORES.MOVIES, remoteToMovie(row));
-        }
+        if (!local || remoteUpdated > localUpdated) { writes.push(remoteToMovie(row)); changed += 1; }
         if (!newest || row.updated_at > newest) newest = row.updated_at;
-      }
+      });
+      await DB.putMany(DB.STORES.MOVIES, writes);
 
       if (data.length < PAGE_SIZE) break;
       from += PAGE_SIZE;
     }
-    return newest;
+    return { newest, changed };
   }
 
   async function pullMetadata(instance) {
+    const DB = global.CinemaVaultDB;
     let from = 0;
     while (true) {
-      const { data, error } = await instance.from('movie_metadata').select('*').range(from, from + PAGE_SIZE - 1);
+      const { data, error } = await instance.from('movie_metadata').select('*')
+        .order('movie_id', { ascending: true }).range(from, from + PAGE_SIZE - 1);
       if (error) throw error;
       if (!data?.length) break;
-      for (const row of data) {
-        const local = await global.CinemaVaultMetadataRepository.get(row.movie_id);
+      const locals = await DB.getMany(DB.STORES.METADATA, data.map(row => row.movie_id));
+      const writes = [];
+      data.forEach((row, index) => {
         const remoteUpdated = Date.parse(row.metadata_updated_at || '') || 0;
-        const localUpdated = Date.parse(local?.cachedAt || '') || 0;
-        if (!local || remoteUpdated >= localUpdated) {
-          await global.CinemaVaultDB.put(global.CinemaVaultDB.STORES.METADATA, remoteToMetadata(row));
-        }
-      }
+        const localUpdated = Date.parse(locals[index]?.cachedAt || '') || 0;
+        if (!locals[index] || remoteUpdated > localUpdated) writes.push(remoteToMetadata(row));
+      });
+      await DB.putMany(DB.STORES.METADATA, writes);
       if (data.length < PAGE_SIZE) break;
       from += PAGE_SIZE;
     }
@@ -167,7 +231,7 @@
   let activeSync = null;
   let rerunRequested = false;
 
-  async function syncNow() {
+  async function syncNow(options = {}) {
     if (activeSync) {
       rerunRequested = true;
       return activeSync;
@@ -176,14 +240,14 @@
       let result;
       do {
         rerunRequested = false;
-        result = await syncNowInternal();
+        result = await syncNowInternal(options);
       } while (rerunRequested);
       return result;
     })();
     try { return await activeSync; } finally { activeSync = null; }
   }
 
-  async function syncNowInternal() {
+  async function syncNowInternal(options = {}) {
     const instance = client();
     if (!instance) return { status: 'not-configured', pushed: 0, pulled: 0 };
 
@@ -192,33 +256,37 @@
     await global.CinemaVaultSyncQueue.resetProcessing();
 
     const before = (await global.CinemaVaultSyncQueue.list('pending')).length;
-    await pushQueue(instance, session.user.id);
+    let pushError = null;
+    try { await pushQueue(instance, session.user.id, options); } catch (error) { pushError = error; }
     const after = (await global.CinemaVaultSyncQueue.list('pending')).length;
 
-    const newest = await pullMovies(instance, previous?.cursor || null);
+    // Always pull, even if some pushes failed, so cloud data still reaches this device.
+    const { newest, changed } = await pullMovies(instance, previous?.cursor || null);
     await pullMetadata(instance);
+
     const failedAfterPush = await global.CinemaVaultSyncQueue.list('failed');
-    if (failedAfterPush.length) {
-      const lastError = failedAfterPush[failedAfterPush.length - 1]?.lastError || 'One or more queued changes could not be saved.';
-      throw new Error(failedAfterPush.length + ' cloud change(s) failed. ' + lastError);
-    }
+    const lastError = pushError?.message
+      || (failedAfterPush.length
+        ? failedAfterPush.length + ' cloud change(s) failed: ' + (failedAfterPush[failedAfterPush.length - 1]?.lastError || 'unknown error')
+        : null);
 
     await global.CinemaVaultSyncStateRepository.save({
       id: 'default',
       deviceId: await global.CinemaVaultSyncStateRepository.getDeviceId(),
       lastSyncedAt: new Date().toISOString(),
       cursor: newest || previous?.cursor || null,
-      syncStatus: 'idle',
-      lastError: null
+      syncStatus: lastError ? 'error' : 'idle',
+      lastError
     });
+    if (lastError) throw new Error(lastError);
 
     const rows = await global.CinemaVaultMovieRepository.list({ includeDeleted: false });
-    return { status: 'synced', pushed: Math.max(0, before - after), pulled: rows.length };
+    return { status: 'synced', pushed: Math.max(0, before - after), pulled: rows.length, changed };
   }
 
-  async function syncSafe() {
+  async function syncSafe(options) {
     try {
-      const result = await syncNow();
+      const result = await syncNow(options);
       return result;
     } catch (error) {
       await global.CinemaVaultSyncStateRepository.markError(error);
@@ -266,9 +334,14 @@
       if (!global.CinemaVaultSupabase?.configured?.()) return { status: 'not-configured' };
       try {
         const session = await global.CinemaVaultSupabase.session();
-        if (!session?.user) return { status: 'signed-out' };
+        if (!session?.user) {
+          const out = { status: 'signed-out' };
+          if (typeof global.CinemaVaultOnSyncResult === 'function') global.CinemaVaultOnSyncResult(out);
+          return out;
+        }
         const result = await syncSafe();
-        if (result.status === 'synced' && typeof global.CinemaVaultAppRefresh === 'function') {
+        if (typeof global.CinemaVaultOnSyncResult === 'function') global.CinemaVaultOnSyncResult(result);
+        if (result.status === 'synced' && result.changed && typeof global.CinemaVaultAppRefresh === 'function') {
           global.CinemaVaultAppRefresh();
         }
         return result;

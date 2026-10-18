@@ -103,6 +103,46 @@
     }
   }
 
+  async function putMany(storeName, values) {
+    if (!values.length) return 0;
+    const db = await open();
+    try {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      for (const value of values) store.put(value);
+      await transactionDone(tx);
+      return values.length;
+    } finally {
+      db.close();
+    }
+  }
+
+  async function getMany(storeName, keys) {
+    if (!keys.length) return [];
+    const db = await open();
+    try {
+      const store = db.transaction(storeName, 'readonly').objectStore(storeName);
+      return await Promise.all(keys.map(key => requestResult(store.get(key))));
+    } finally {
+      db.close();
+    }
+  }
+
+  // Atomically store movies and enqueue their sync operations in one transaction.
+  async function writeMoviesWithQueue(movies, operations) {
+    const db = await open();
+    try {
+      const tx = db.transaction([STORES.MOVIES, STORES.PENDING], 'readwrite');
+      const movieStore = tx.objectStore(STORES.MOVIES);
+      const queueStore = tx.objectStore(STORES.PENDING);
+      movies.forEach(movie => movieStore.put(movie));
+      operations.forEach(op => queueStore.add(op));
+      await transactionDone(tx);
+    } finally {
+      db.close();
+    }
+  }
+
   async function remove(storeName, key) {
     const db = await open();
     try {
@@ -144,6 +184,9 @@
     get,
     getAll,
     put,
+    putMany,
+    getMany,
+    writeMoviesWithQueue,
     remove,
     clearStore,
     clearAll
