@@ -5,6 +5,13 @@
   const Movies = () => global.CinemaVaultMovieRepository;
   const Queue = () => global.CinemaVaultSyncQueue;
 
+  // View-only accounts never write (the database refuses it anyway); fail early with a clear message.
+  function assertCanWrite() {
+    if (global.CinemaVaultAuth && !global.CinemaVaultAuth.canWrite()) {
+      throw new Error('This is a view-only account — only the vault owner can make changes.');
+    }
+  }
+
   function requestSync() {
     if (!global.navigator?.onLine) return;
     // Queue writes remain durable even when auth/configuration is unavailable.
@@ -18,6 +25,7 @@
   }
 
   async function saveMovie(input) {
+    assertCanWrite();
     const exists = input.id ? await Movies().get(input.id) : null;
     const movie = await Movies().upsert(input);
 
@@ -33,6 +41,7 @@
 
   // Bulk add: one IndexedDB transaction and one sync request for the whole batch.
   async function saveMovies(inputs) {
+    assertCanWrite();
     const movies = inputs.map(input => Movies().toMovie(input));
     const stamp = new Date().toISOString();
     const operations = movies.map(movie => ({
@@ -47,6 +56,8 @@
   async function saveMetadata(movieId, input) {
     const Metadata = () => global.CinemaVaultMetadataRepository;
     const metadata = await Metadata().save(movieId, input);
+    // Viewers keep fetched posters in their own browser cache only; the owner's copy syncs to the cloud.
+    if (global.CinemaVaultAuth && !global.CinemaVaultAuth.canWrite()) return metadata;
     await Queue().enqueue({
       operation: 'update',
       entity: 'movie_metadata',
@@ -58,6 +69,7 @@
   }
 
   async function deleteMovie(id) {
+    assertCanWrite();
     const movie = await Movies().softDelete(id);
     if (!movie) return null;
 

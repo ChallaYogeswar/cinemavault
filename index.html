@@ -10,13 +10,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="auth.css">
 </head>
 <body>
   <div class="noise" aria-hidden="true"></div>
   <div id="app"></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- supabase-js is served from this site (not a CDN) so browsers with strict tracking prevention can still keep your session. -->
+  <script src="vendor/supabase.js"></script>
   <script src="cacheService.js"></script>
   <script src="tmdbService.js"></script>
   <script src="src/storage/indexeddb.js"></script>
@@ -27,6 +29,7 @@
   <script src="src/storage/localFirstRepository.js"></script>
   <script src="src/services/supabaseClient.js"></script>
   <script src="src/services/syncEngine.js"></script>
+  <script src="src/auth/authView.js"></script>
   <script src="src/recommendation/recommendationHistory.js"></script>
   <script src="src/recommendation/recommendationEngine.js"></script>
   <script src="app.js"></script>

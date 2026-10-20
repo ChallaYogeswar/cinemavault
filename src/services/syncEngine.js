@@ -257,7 +257,9 @@
 
     const before = (await global.CinemaVaultSyncQueue.list('pending')).length;
     let pushError = null;
-    try { await pushQueue(instance, session.user.id, options); } catch (error) { pushError = error; }
+    // View-only accounts only download; they never push.
+    const canWrite = global.CinemaVaultAuth ? global.CinemaVaultAuth.canWrite() : true;
+    if (canWrite) { try { await pushQueue(instance, session.user.id, options); } catch (error) { pushError = error; } }
     const after = (await global.CinemaVaultSyncQueue.list('pending')).length;
 
     // Always pull, even if some pushes failed, so cloud data still reaches this device.
@@ -350,15 +352,9 @@
       }
     };
 
-    window.addEventListener('online', () => { void run(); });
-    // The magic-link callback creates a Supabase session without a dedicated login page.
-    if (!start.authListenerAttached && global.CinemaVaultSupabase?.onAuthStateChange) {
-      start.authListenerAttached = true;
-      global.CinemaVaultSupabase.onAuthStateChange((event, session) => {
-        if (session?.user && ['SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED'].includes(event)) {
-          void run();
-        }
-      });
+    if (!start.onlineListenerAttached) {
+      start.onlineListenerAttached = true;
+      window.addEventListener('online', () => { void run(); });
     }
     // Pull remote records on startup for an already-configured, signed-in user.
     return global.navigator?.onLine ? run() : Promise.resolve({ status: 'offline' });

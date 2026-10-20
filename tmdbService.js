@@ -5,8 +5,36 @@
   const IMAGE_BASE = 'https://image.tmdb.org/t/p/w500';
   const cache = new Map();
 
+  // Preferred path: the site's own /api/tmdb proxy (key lives in Vercel env, nothing to set up per device).
+  // Fallback: a personal key saved in this browser (used on hosts without the proxy, e.g. GitHub Pages).
+  let proxyState = 'unknown'; // 'unknown' | 'ok' | 'missing'
+
   function getApiKey() {
     return window.CINEMAVAULT_TMDB_API_KEY || localStorage.getItem('cv3_tmdb_key') || '';
+  }
+
+  async function accessToken() {
+    try { return (await window.CinemaVaultSupabase?.session?.())?.access_token || ''; } catch (_) { return ''; }
+  }
+
+  // Returns a Response-like object, or null if no TMDB access is available at all.
+  async function tmdb(path, params) {
+    if (proxyState !== 'missing') {
+      try {
+        const token = await accessToken();
+        if (token) {
+          const q = new URLSearchParams({ path, ...params });
+          const res = await fetch('/api/tmdb?' + q, { headers: { Authorization: 'Bearer ' + token } });
+          if (res.ok) { proxyState = 'ok'; return res; }
+          if (res.status === 404 || res.status === 501 || res.status === 405) proxyState = 'missing';
+          else if (res.status !== 401) return res;
+        }
+      } catch (_) { /* fall through to a personal key */ }
+    }
+    const key = getApiKey();
+    if (!key) return null;
+    const q = new URLSearchParams({ ...params, api_key: key });
+    return fetch(API_BASE + path + '?' + q);
   }
 
   function sanitizeTitle(rawTitle) {
@@ -45,12 +73,11 @@
       if (stored) { const parsed=JSON.parse(stored); cache.set(key, parsed); return parsed; }
     } catch (error) {}
 
-    const apiKey = getApiKey();
-    if (!apiKey || !cleanTitle) return fallback(cleanTitle);
+    if (!cleanTitle) return fallback(cleanTitle);
 
     try {
-      const query = new URLSearchParams({ api_key: apiKey, query: cleanTitle });
-      const searchResponse = await fetch(API_BASE + '/search/multi?' + query);
+      const searchResponse = await tmdb('/search/multi', { query: cleanTitle });
+      if (!searchResponse) return fallback(cleanTitle); // no proxy and no personal key: don't cache the miss
       if (!searchResponse.ok) throw new Error('TMDB search failed');
       const searchData = await searchResponse.json();
       const results=(searchData.results||[]).filter(r=>r.media_type==='movie'||r.media_type==='tv');
@@ -59,7 +86,7 @@
 
       const mediaType=item.media_type==='tv'?'tv':'movie';
       let videoData={results:[]};
-      try{const videoResponse=await fetch(API_BASE+'/'+mediaType+'/'+item.id+'/videos?api_key='+encodeURIComponent(apiKey));if(videoResponse.ok)videoData=await videoResponse.json();}catch(error){}
+      try{const videoResponse=await tmdb('/'+mediaType+'/'+item.id+'/videos',{});if(videoResponse&&videoResponse.ok)videoData=await videoResponse.json();}catch(error){}
       const trailer=(videoData.results||[]).find(video=>video.site==='YouTube'&&(video.type==='Trailer'||video.type==='Teaser'))||(videoData.results||[]).find(video=>video.site==='YouTube');
       const result={
         id:item.id,

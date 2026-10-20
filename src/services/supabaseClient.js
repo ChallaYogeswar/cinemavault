@@ -1,79 +1,96 @@
-/* CinemaVault PR6 — browser Supabase client.
- * Only the public/publishable key belongs here. RLS remains the authorization boundary.
+/* CinemaVault — Supabase client + authentication service.
+ *
+ * Only the public/publishable key lives here (it is designed to be public); row-level security in the
+ * database is the real authorization boundary. Never put a service-role key in this file.
+ *
+ * Nothing needs configuring per device: open the site, sign in once, and the session is kept (and
+ * refreshed automatically) in this browser.
  */
 (function (global) {
   'use strict';
 
-  const URL_KEY = 'cinemavault_supabase_url';
-  const KEY_KEY = 'cinemavault_supabase_publishable_key';
-  // Public project URL + publishable (anon-level) key. Both are safe to ship in the browser:
-  // row-level security is the authorization boundary. Never put a service-role key here.
-  const DEFAULT_URL = 'https://qhopjfqpnmoinggejgvt.supabase.co';
-  const DEFAULT_KEY = 'sb_publishable_bvBb8dJt1bkRLLvIQIYEBw_EVZWq-yo';
-  // An earlier build shipped a mistyped project ref; discard it if it was saved in this browser.
-  const BAD_REFS = ['qhopjfqpmoniggejgvjt'];
+  const SUPABASE_URL = 'https://qhopjfqpnmoinggejgvt.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_bvBb8dJt1bkRLLvIQIYEBw_EVZWq-yo';
 
-  function dropStaleConfig() {
-    try {
-      const saved = localStorage.getItem(URL_KEY) || '';
-      if (BAD_REFS.some(ref => saved.includes(ref))) {
-        localStorage.removeItem(URL_KEY);
-        localStorage.removeItem(KEY_KEY);
-      }
-    } catch (_) {}
-  }
-  dropStaleConfig();
+  // Older builds asked each browser to store a URL/key in localStorage (and one build shipped a mistyped
+  // project ref). Those values are no longer used; remove them so they can never shadow the real ones.
+  try {
+    localStorage.removeItem('cinemavault_supabase_url');
+    localStorage.removeItem('cinemavault_supabase_publishable_key');
+  } catch (_) {}
+
   let client = null;
-  let signature = '';
-
-  function config() {
-    return {
-      url: localStorage.getItem(URL_KEY) || DEFAULT_URL,
-      key: localStorage.getItem(KEY_KEY) || DEFAULT_KEY
-    };
-  }
-
-  function configured() {
-    const value = config();
-    return Boolean(value.url && value.key && global.supabase?.createClient);
-  }
 
   function getClient() {
-    const value = config();
-    if (!configured()) return null;
-    const nextSignature = value.url + '|' + value.key;
-    if (!client || signature !== nextSignature) {
-      client = global.supabase.createClient(value.url, value.key, {
-        auth: {
-          autoRefreshToken: true,
-          persistSession: true,
-          detectSessionInUrl: true
-        }
-      });
-      signature = nextSignature;
-    }
+    if (client) return client;
+    if (!global.supabase?.createClient) return null;
+    client = global.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+        storageKey: 'cinemavault-auth'
+      }
+    });
     return client;
   }
 
-  function saveConfig(url, key) {
-    const cleanUrl = String(url || '').trim().replace(/\/$/, '');
-    const cleanKey = String(key || '').trim();
-    if (!cleanUrl || !/^https:\/\//i.test(cleanUrl)) throw new Error('Supabase URL must start with https://');
-    if (!cleanKey) throw new Error('Supabase publishable key is required');
-    localStorage.setItem(URL_KEY, cleanUrl);
-    localStorage.setItem(KEY_KEY, cleanKey);
-    client = null;
-    signature = '';
-    return { url: cleanUrl, key: cleanKey };
+  function configured() { return Boolean(getClient()); }
+
+  function need() {
+    const instance = getClient();
+    if (!instance) throw new Error('The sign-in library failed to load. Check your connection and reload the page.');
+    return instance;
   }
 
-  function clearConfig() {
-    localStorage.removeItem(URL_KEY);
-    localStorage.removeItem(KEY_KEY);
-    client = null;
-    signature = '';
+  function redirectUrl() {
+    return global.location.origin + global.location.pathname;
   }
 
+  /* ---------- friendly errors ---------- */
+  function friendly(error) {
+    const raw = String(error?.message || error || '');
+    const code = String(error?.code || '');
+    const text = raw.toLowerCase();
+    if (/failed to fetch|networkerror|load failed|network request failed/.test(text)) return 'Can’t reach the server. Check your internet connection and try again.';
+    if (/invalid login credentials/.test(text)) return 'That email and password don’t match. Check them, or use “Forgot password”.';
+    if (/email not confirmed/.test(text)) return 'Please confirm your email first — open the link we sent you, then sign in.';
+    if (/user already registered|already been registered/.test(text)) return 'An account with this email already exists. Sign in instead, or reset your password.';
+    if (/rate limit|too many requests|over_email_send_rate_limit|over_sms_send_rate_limit/.test(text + code)) return 'Too many attempts. Please wait a few minutes and try again.';
+    if (/password should be at least|weak_password|password is too weak/.test(text + code)) return 'Choose a stronger password (at least 8 characters, mixing letters and numbers).';
+    if (/same password|different from the old/.test(text)) return 'Your new password must be different from the old one.';
+    if (/phone.*(provider|disabled|unsupported)|sms.*(provider|disabled)|phone_provider_disabled/.test(text + code)) return 'Phone sign-in isn’t switched on for this site yet.';
+    if (/provider is not enabled|unsupported provider|provider_disabled/.test(text + code)) return 'That sign-in method isn’t switched on for this site yet.';
+    if (/token has expired|otp_expired|invalid.*(token|otp)|otp.*invalid/.test(text + code)) return 'That code is wrong or has expired. Request a new one.';
+    if (/signups not allowed|signup_disabled/.test(text + code)) return 'New sign-ups are currently turned off.';
+    if (/invalid format|validation_failed|unable to validate email/.test(text + code)) return 'That doesn’t look like a valid email address or phone number.';
+    return raw || 'Something went wrong. Please try again.';
+  }
+
+  /* ---------- which sign-in methods are enabled on the project ---------- */
+  let providersPromise = null;
+  function providers() {
+    if (!providersPromise) {
+      providersPromise = fetch(SUPABASE_URL + '/auth/v1/settings', { headers: { apikey: SUPABASE_KEY } })
+        .then(r => (r.ok ? r.json() : Promise.reject(new Error('settings ' + r.status))))
+        .then(s => ({
+          known: true,
+          email: s.external?.email !== false,
+          phone: Boolean(s.external?.phone),
+          google: Boolean(s.external?.google),
+          github: Boolean(s.external?.github),
+          facebook: Boolean(s.external?.facebook),
+          apple: Boolean(s.external?.apple),
+          signupDisabled: Boolean(s.disable_signup),
+          autoconfirm: Boolean(s.mailer_autoconfirm)
+        }))
+        // If the lookup fails (offline, blocked), assume everything is available and let the attempt report the real error.
+        .catch(() => ({ known: false, email: true, phone: true, google: true, github: true, facebook: true, apple: true, signupDisabled: false, autoconfirm: false }));
+    }
+    return providersPromise;
+  }
+
+  /* ---------- sessions ---------- */
   async function session() {
     const instance = getClient();
     if (!instance) return null;
@@ -82,39 +99,70 @@
     return data.session || null;
   }
 
+  function onAuthStateChange(callback) {
+    const instance = need();
+    const { data } = instance.auth.onAuthStateChange(callback);
+    return () => data.subscription.unsubscribe();
+  }
+
+  /* ---------- sign in / up ---------- */
   async function signIn(email, password) {
-    const instance = getClient();
-    if (!instance) throw new Error('Configure Supabase first.');
-    const { data, error } = await instance.auth.signInWithPassword({ email, password });
+    const { data, error } = await need().auth.signInWithPassword({ email: String(email).trim(), password });
     if (error) throw error;
     return data;
   }
 
-  async function sendMagicLink(email) {
-    const instance = getClient();
-    if (!instance) throw new Error('Save the Supabase project URL and publishable key first.');
-    const cleanEmail = String(email || '').trim().toLowerCase();
-    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      throw new Error('Enter a valid email address.');
-    }
-    const redirectTo = window.location.origin + window.location.pathname;
-    const { error } = await instance.auth.signInWithOtp({
-      email: cleanEmail,
-      options: { emailRedirectTo: redirectTo, shouldCreateUser: true }
+  async function signUp(email, password, fullName) {
+    const { data, error } = await need().auth.signUp({
+      email: String(email).trim(),
+      password,
+      options: { emailRedirectTo: redirectUrl(), data: fullName ? { full_name: String(fullName).trim() } : undefined }
     });
     if (error) throw error;
-    return { email: cleanEmail };
+    // Supabase hides "already registered" for confirmed accounts: it returns a user with no identities.
+    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      const err = new Error('User already registered');
+      throw err;
+    }
+    return { needsConfirmation: !data.session, email: String(email).trim() };
   }
 
-  async function signUp(email, password) {
-    const instance = getClient();
-    if (!instance) throw new Error('Configure Supabase first.');
-    const redirectTo = window.location.origin + window.location.pathname + window.location.hash;
-    const { data, error } = await instance.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: redirectTo }
+  async function resendConfirmation(email) {
+    const { error } = await need().auth.resend({ type: 'signup', email: String(email).trim(), options: { emailRedirectTo: redirectUrl() } });
+    if (error) throw error;
+  }
+
+  async function sendMagicLink(email) {
+    const { error } = await need().auth.signInWithOtp({
+      email: String(email).trim(),
+      options: { emailRedirectTo: redirectUrl(), shouldCreateUser: true }
     });
+    if (error) throw error;
+  }
+
+  async function signInWithProvider(provider) {
+    const { error } = await need().auth.signInWithOAuth({ provider, options: { redirectTo: redirectUrl() } });
+    if (error) throw error;
+  }
+
+  async function sendPhoneCode(phone) {
+    const { error } = await need().auth.signInWithOtp({ phone, options: { shouldCreateUser: true } });
+    if (error) throw error;
+  }
+
+  async function verifyPhoneCode(phone, token) {
+    const { data, error } = await need().auth.verifyOtp({ phone, token: String(token).trim(), type: 'sms' });
+    if (error) throw error;
+    return data;
+  }
+
+  async function sendPasswordReset(email) {
+    const { error } = await need().auth.resetPasswordForEmail(String(email).trim(), { redirectTo: redirectUrl() });
+    if (error) throw error;
+  }
+
+  async function updatePassword(password) {
+    const { data, error } = await need().auth.updateUser({ password });
     if (error) throw error;
     return data;
   }
@@ -126,24 +174,57 @@
     if (error) throw error;
   }
 
-  function onAuthStateChange(callback) {
+  /* ---------- role (owner / viewer) ---------- */
+  const Auth = {
+    profile: null,
+    // The owner can edit; a viewer is read-only. If the profile can't be read (for example the roles
+    // migration has not been applied yet) behave as before: the signed-in user edits their own library.
+    isViewer() { return Auth.profile?.role === 'viewer'; },
+    isOwner() { return !Auth.isViewer(); },
+    canWrite() { return !Auth.isViewer(); }
+  };
+
+  async function loadProfile(user) {
+    Auth.profile = null;
     const instance = getClient();
-    if (!instance) return () => {};
-    const { data } = instance.auth.onAuthStateChange(callback);
-    return () => data.subscription.unsubscribe();
+    if (!instance || !user) return null;
+    try {
+      const { data, error } = await instance.from('profiles').select('id,email,phone,display_name,role').eq('id', user.id).maybeSingle();
+      if (error) throw error;
+      Auth.profile = data || null;
+    } catch (error) {
+      console.warn('[CinemaVault] profile unavailable, defaulting to full access for this account:', error?.message || error);
+      Auth.profile = null;
+    }
+    return Auth.profile;
   }
 
+  async function updateDisplayName(userId, name) {
+    const { error } = await need().from('profiles').update({ display_name: String(name || '').trim() }).eq('id', userId);
+    if (error) throw error;
+    if (Auth.profile) Auth.profile.display_name = String(name || '').trim();
+  }
+
+  global.CinemaVaultAuth = Auth;
   global.CinemaVaultSupabase = Object.freeze({
-    config,
+    URL: SUPABASE_URL,
     configured,
     getClient,
-    saveConfig,
-    clearConfig,
+    providers,
+    friendly,
     session,
+    onAuthStateChange,
     signIn,
     signUp,
+    resendConfirmation,
     sendMagicLink,
+    signInWithProvider,
+    sendPhoneCode,
+    verifyPhoneCode,
+    sendPasswordReset,
+    updatePassword,
     signOut,
-    onAuthStateChange
+    loadProfile,
+    updateDisplayName
   });
 })(window);

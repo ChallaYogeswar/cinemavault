@@ -1,6 +1,6 @@
-/* CinemaVault PR5 — cinematic frontend.
- * UI reads/writes the PR4 IndexedDB layer. Supabase synchronization is intentionally
- * not implemented here; queued mutations remain available for the future sync engine.
+/* CinemaVault — cinematic frontend.
+ * Sign-in gate -> local-first IndexedDB library -> background sync with Supabase.
+ * Owners edit; view-only (friend) accounts read the owner's library.
  */
 (function () {
   'use strict';
@@ -21,8 +21,10 @@
     metadata: new Map(),
     recommendation: null,
     migrated: false,
+    user: null,
+    ready: false,
+    signOutNotice: '',
     libraryVisible: 60,
-    cloud: { status: 'unknown', error: '' },
     bulkItems: []
   };
 
@@ -141,6 +143,8 @@
 
     if (!window.CinemaVaultMetadata) return null;
     const remote = await window.CinemaVaultMetadata.fetchCinemaMetadata(movie.title, movie.year);
+    // Nothing found (or TMDB unreachable): show without a poster for now, but don't store the miss so a later visit can retry.
+    if (!remote.id && !remote.poster) return null;
     const data = {
       tmdbId: remote.id || null,
       tmdbMediaType: remote.mediaType || movie.media_type,
@@ -223,9 +227,8 @@
         '<nav class="main-nav" aria-label="Main navigation">' +
           navItem('home','Home') + navItem('library','Library') + navItem('genres','Genres') + navItem('discover','Discover') + navItem('stats','Stats') +
         '</nav>' +
-        '<div class="top-actions"><button class="icon-button" data-action="search" aria-label="Search">⌕</button><button class="add-button" data-route="add">+ <span>Add</span></button><button class="menu-button" data-action="menu" aria-label="Open menu">☰</button></div>' +
+        '<div class="top-actions"><button class="icon-button" data-action="search" aria-label="Search">⌕</button><button class="add-button" data-owner-only data-route="add">+ <span>Add</span></button><button class="menu-button" data-action="menu" aria-label="Open menu">☰</button></div>' +
       '</header>' +
-      '<div id="cloud-banner" class="cloud-banner" hidden></div>' +
       '<main id="main-content">' + content + '</main>' +
       '<footer class="footer"><span>Private cinema archive</span><span>' + remaining + ' unwatched</span></footer>' +
       '<div class="mobile-nav">' + navItem('home','⌂') + navItem('library','▦') + navItem('discover','✦') + navItem('genres','◈') + navItem('stats','◌') + '</div>' +
@@ -286,13 +289,13 @@
     const list = getLibraryList();
     const visible = list.slice(0, state.libraryVisible);
     const hasMore = visible.length < list.length;
-    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">THE VAULT</p><h1>Your cinema.</h1><p>' + list.length + ' titles in this view.</p></div><button class="primary-button" data-route="add">+ Add to vault</button></section>' +
+    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">THE VAULT</p><h1>Your cinema.</h1><p>' + list.length + ' titles in this view.</p></div><button class="primary-button" data-owner-only data-route="add">+ Add to vault</button></section>' +
       '<section class="library-toolbar"><label class="search-box"><span>⌕</span><input id="library-search" value="' + esc(state.query) + '" placeholder="Search your cinema..." autocomplete="off"></label><div class="filter-group">' +
       ['all','unwatched','watched'].map(f => '<button class="filter-button ' + (state.filter===f?'active':'') + '" data-filter="' + f + '">' + (f==='all'?'All':f[0].toUpperCase()+f.slice(1)) + '</button>').join('') +
       '</div><select id="library-sort" class="select-control"><option value="title"' + (state.sort==='title'?' selected':'') + '>A–Z</option><option value="year"' + (state.sort==='year'?' selected':'') + '>Year</option><option value="rating"' + (state.sort==='rating'?' selected':'') + '>Rating</option><option value="genre"' + (state.sort==='genre'?' selected':'') + '>Genre</option><option value="recent"' + (state.sort==='recent'?' selected':'') + '>Recently changed</option></select></section>' +
       (list.length ? '<section class="library-grid">' + visible.map(movieCard).join('') + '</section>' +
         (hasMore ? '<div class="load-more-wrap"><button class="ghost-button" data-action="load-more">Load more · ' + Math.min(60, list.length-visible.length) + ' next</button><p>Showing ' + visible.length + ' of ' + list.length + '</p></div>' : '<div class="load-more-wrap"><p>Showing all ' + list.length + ' titles</p></div>')
-        : '<section class="empty-state"><span>✦</span><h2>No films here.</h2><p>Change the filter or add something new to your vault.</p><button class="primary-button" data-route="add">Add a film</button></section>');
+        : '<section class="empty-state"><span>✦</span><h2>No films here.</h2><p>Change the filter' + (CinemaVaultAuth.canWrite() ? ' or add something new to your vault.' : ' to see more of the vault.') + '</p><button class="primary-button" data-owner-only data-route="add">Add a film</button></section>');
   }
 
   function genresPage() {
@@ -341,55 +344,40 @@
   }
 
   function settingsPage() {
-    const config = window.CinemaVaultSupabase?.config?.() || { url: '', key: '' };
-    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>Your library stays local until you connect your verified email. After that, the same private library can sync across devices without a visible sign-in page.</p></div></section>' +
+    const user = state.user || {};
+    const profile = CinemaVaultAuth.profile || {};
+    const ident = user.email || user.phone || profile.email || profile.phone || '';
+    const name = profile.display_name || (ident.includes('@') ? ident.split('@')[0] : ident) || 'You';
+    const viewer = !CinemaVaultAuth.canWrite();
+    return '<section class="page-head cinematic-enter"><div><p class="eyebrow">SETTINGS</p><h1>Keep the vault yours.</h1><p>' + (viewer ? 'You’re browsing the vault with a view-only account.' : 'Your library is saved on this device first, then synced to your private cloud vault.') + '</p></div></section>' +
       '<section class="settings-grid">' +
-      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>Private cloud sync</h2><p id="sync-account-status">Checking your secure connection…</p><label class="inline-field">Supabase project URL<input id="supabase-url" type="url" value="' + esc(config.url || '') + '" placeholder="https://your-project.supabase.co" autocomplete="url"></label><label class="inline-field">Publishable key<input id="supabase-publishable-key" type="password" value="' + esc(config.key || '') + '" placeholder="sb_publishable_…" autocomplete="off"></label><label class="inline-field">Email for your vault<input id="sync-email" type="email" placeholder="you@example.com" autocomplete="email"></label><div class="panel-actions"><button class="ghost-button" data-action="save-supabase-config">Save connection</button><button class="primary-button" data-action="send-sync-link">Email secure link</button></div><p class="muted">Use the same verified email on every device. The link establishes your account; row-level security keeps your movie records private. Only a public/publishable Supabase key belongs here—never use a service-role key.</p><div class="panel-actions"><button class="ghost-button" data-action="sync-now">Sync now</button><button class="ghost-button" data-action="upload-local-library">Upload this device&#39;s library</button></div></div>' +
-      '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Sync status</h2><p id="queue-status">Checking local changes…</p><span id="sync-status-pill" class="status-pill pending">Waiting for connection</span><p id="sync-last-error" class="muted">Local changes remain saved if the device is offline. Failed cloud writes will be reported here.</p></div>' +
-      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Local storage</h2><p>New titles are saved locally first, then queued for your private cloud library. Other devices receive cloud records after they verify the same email.</p><span class="status-pill local">Local-first</span></div>' +
-      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>TMDB metadata</h2><p>Posters, backdrops, and film details can be fetched on demand and cached in this browser.</p><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Stored only in this browser"></label><button class="ghost-button" data-action="save-key">Save key</button></div>' +
-      '<div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local library</h2><p>This removes CinemaVault data from this browser only. It does not delete any remote database records.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◎</span><h2>Account</h2>' +
+        '<div class="account-line"><span class="account-avatar">' + esc((name[0] || 'C').toUpperCase()) + '</span><div><b>' + esc(name) + '</b><small>' + esc(ident) + '</small></div></div>' +
+        '<span class="role-badge ' + (viewer ? 'viewer' : 'owner') + '">' + (viewer ? 'Viewer · view only' : 'Owner · full access') + '</span>' +
+        '<label class="inline-field">Display name<input id="display-name" type="text" maxlength="60" value="' + esc(profile.display_name || '') + '" placeholder="Your name"></label>' +
+        '<label class="inline-field">New password<input id="new-password" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></label>' +
+        '<div class="panel-actions"><button class="ghost-button" data-action="save-name">Save name</button><button class="ghost-button" data-action="change-password">Change password</button><button class="danger-button" data-action="sign-out">Sign out</button></div></div>' +
+      '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Cloud sync</h2><p id="queue-status">Checking local changes…</p><span id="sync-status-pill" class="status-pill pending">Checking…</span><p id="sync-last-error" class="muted">—</p><div class="panel-actions"><button class="ghost-button" data-action="sync-now">' + (viewer ? 'Refresh from cloud' : 'Sync now') + '</button></div></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Posters &amp; trailers</h2><p>Posters, backdrops and trailers load automatically for everyone who signs in — no key to enter on any device.</p><details><summary>Advanced: use my own TMDB key on this browser</summary><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Only needed if the site’s server key isn’t set up"></label><button class="ghost-button" data-action="save-key">Save key</button></details></div>' +
+      '<div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local copy</h2><p>Removes the copy of the vault stored in this browser. Your cloud library is not touched, and it re-downloads next time you open the site.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div>' +
       '</section>';
   }
 
+  // Sync problems surface as a toast (once per distinct message) and on the Settings page, not as a permanent banner.
+  let lastSyncToast = '';
   function setCloud(result) {
     if (!result) return;
-    const status = result.status;
-    if (status === 'synced') state.cloud = { status: 'synced', error: '' };
-    else if (status === 'signed-out') state.cloud = { status: 'signed-out', error: '' };
-    else if (status === 'error') state.cloud = { status: 'error', error: String(result.error?.message || result.error || 'Sync failed') };
-    else return;
-    updateBanner();
-  }
-
-  function updateBanner() {
-    const el = $('#cloud-banner');
-    if (!el) return;
-    const { status, error } = state.cloud;
-    if (status === 'signed-out') {
-      el.hidden = false;
-      el.innerHTML = '<div><b>Not signed in — your cloud library is not loaded.</b><span>New titles are saved on this device only until you sign in. Enter your email to get a secure link.</span></div>' +
-        '<form id="banner-signin"><input id="banner-email" type="email" required placeholder="you@example.com" autocomplete="email"><button class="primary-button" type="submit">Email secure link</button></form>';
-      $('#banner-signin')?.addEventListener('submit', async e => {
-        e.preventDefault();
-        try {
-          await window.CinemaVaultSupabase.sendMagicLink($('#banner-email').value);
-          toast('Secure link sent — open it on this device to finish signing in.', 6000);
-        } catch (err) { toast('Could not send link: ' + (err?.message || err), 6000); }
-      });
-    } else if (status === 'error') {
-      el.hidden = false;
-      el.innerHTML = '<div><b>Cloud sync needs attention.</b><span>' + esc(error) + ' Your changes are safe on this device.</span></div><button class="ghost-button" data-banner="retry">Retry sync</button>';
-      $('[data-banner="retry"]', el)?.addEventListener('click', () => syncNow());
-    } else {
-      el.hidden = true;
-      el.innerHTML = '';
+    if (result.status === 'error') {
+      const text = String(result.error?.message || result.error || 'Sync failed');
+      if (text !== lastSyncToast) { lastSyncToast = text; toast('Cloud sync needs attention: ' + text, 6000); }
+    } else if (result.status === 'synced') {
+      lastSyncToast = '';
     }
   }
-
   window.CinemaVaultOnSyncResult = setCloud;
 
   function render() {
+    if (state.route === 'add' && !CinemaVaultAuth.canWrite()) state.route = 'library';
     let content = '';
     if (state.route === 'home') content = homePage();
     else if (state.route === 'library') content = libraryPage();
@@ -400,7 +388,6 @@
     else if (state.route === 'settings') content = settingsPage();
     $('#app').innerHTML = shell(content);
     bind();
-    updateBanner();
     reveal();
     if (state.route === 'home') renderHomeRecommendation();
     if (state.route === 'discover') { renderDiscoverRecommendation(); renderHistory(); }
@@ -501,7 +488,18 @@
     const rating = Number(movie.user_rating || 0);
     return '<div class="detail-backdrop" style="' + (meta?.backdrop ? 'background-image:linear-gradient(90deg,rgba(7,8,10,.98) 0%,rgba(7,8,10,.82) 45%,rgba(7,8,10,.48) 100%),url(' + esc(meta.backdrop) + ')' : '') + '"></div>' +
       '<div class="detail-panel"><button class="close-button" data-action="close-detail">×</button><div class="detail-hero"><div class="detail-poster">' + posterMarkup(movie, meta) + '</div><div class="detail-copy"><p class="eyebrow">FILM RECORD</p><h1>' + esc(movie.title) + '</h1><p class="detail-meta">' + esc([movie.year || '—', movie.media_type === 'tv' ? 'Series' : 'Movie', formatRuntime(movie.runtime_minutes)].filter(Boolean).join(' · ')) + '</p><div class="detail-genres">' + genres(movie).map(g=>'<span>'+esc(g)+'</span>').join('') + '</div>' + (meta?.overview ? '<p class="overview">' + esc(meta.overview) + '</p>' : '') + (meta?.trailer ? '<button class="ghost-button" data-action="trailer">Watch trailer ↗</button>' : '') + '</div></div>' +
-      '<div class="record-section"><p class="eyebrow">YOUR RECORD</p><h2>How did it feel?</h2><div class="rating-row">' + [1,2,3,4,5].map(n=>'<button class="rating-choice ' + (rating===n?'active':'') + '" data-rating="'+n+'" aria-label="Rating '+n+'">' + ['😐','🙂','👍','🔥','💯'][n-1] + '</button>').join('') + '</div><div class="watch-line"><label><input id="detail-watched" type="checkbox" ' + (movie.watched?'checked':'') + '> <span>Mark as watched</span></label><label>Watched on<input id="detail-date" type="date" value="' + esc(movie.watched_on || '') + '"></label></div><div class="record-grid"><label>Verdict<textarea id="detail-verdict" rows="3" placeholder="Your take…">' + esc(movie.verdict) + '</textarea></label><label>Technical notes<textarea id="detail-technical" rows="3" placeholder="VFX, cinematography, sound, editing…">' + esc(movie.technical_notes) + '</textarea></label></div><div class="detail-actions"><button class="primary-button" data-action="save-detail">Save record</button><button class="danger-button" data-action="delete-detail">Remove from vault</button></div></div></div>';
+      (CinemaVaultAuth.canWrite() ? '' : readOnlyRecord(movie, rating)) +
+      (!CinemaVaultAuth.canWrite() ? '' : '<div class="record-section"><p class="eyebrow">YOUR RECORD</p><h2>How did it feel?</h2><div class="rating-row">' + [1,2,3,4,5].map(n=>'<button class="rating-choice ' + (rating===n?'active':'') + '" data-rating="'+n+'" aria-label="Rating '+n+'">' + ['😐','🙂','👍','🔥','💯'][n-1] + '</button>').join('') + '</div><div class="watch-line"><label><input id="detail-watched" type="checkbox" ' + (movie.watched?'checked':'') + '> <span>Mark as watched</span></label><label>Watched on<input id="detail-date" type="date" value="' + esc(movie.watched_on || '') + '"></label></div><div class="record-grid"><label>Verdict<textarea id="detail-verdict" rows="3" placeholder="Your take…">' + esc(movie.verdict) + '</textarea></label><label>Technical notes<textarea id="detail-technical" rows="3" placeholder="VFX, cinematography, sound, editing…">' + esc(movie.technical_notes) + '</textarea></label></div><div class="detail-actions"><button class="primary-button" data-action="save-detail">Save record</button><button class="danger-button" data-action="delete-detail">Remove from vault</button></div></div>') + '</div>';
+  }
+
+  function readOnlyRecord(movie, rating) {
+    const feel = rating ? ['😐','🙂','👍','🔥','💯'][rating - 1] + ' ' + rating + '/5' : 'Not rated yet';
+    return '<div class="record-section"><p class="eyebrow">THE VAULT OWNER’S RECORD</p><h2>' + (movie.watched ? 'Watched' : 'Not watched yet') + '</h2>' +
+      '<div class="readonly-record"><div><span class="ro-label">Rating</span><p>' + esc(feel) + '</p></div>' +
+      (movie.watched && movie.watched_on ? '<div><span class="ro-label">Watched on</span><p>' + esc(movie.watched_on) + '</p></div>' : '') +
+      (movie.verdict ? '<div><span class="ro-label">Verdict</span><p>' + esc(movie.verdict) + '</p></div>' : '') +
+      (movie.technical_notes ? '<div><span class="ro-label">Technical notes</span><p>' + esc(movie.technical_notes) + '</p></div>' : '') +
+      '</div><span class="readonly-pill">View-only account</span></div>';
   }
 
   function bindDetail(layer) {
@@ -681,82 +679,66 @@
     const pending = await CinemaVaultSyncQueue.list('pending');
     const failed = await CinemaVaultSyncQueue.list('failed');
     const el = $('#queue-status');
-    if (el) el.textContent = pending.length + ' pending local change' + (pending.length===1?'':'s') + (failed.length ? ' · ' + failed.length + ' failed' : '') + '.';
+    if (el) el.textContent = !CinemaVaultAuth.canWrite()
+      ? 'View-only account — nothing to upload.'
+      : pending.length + ' pending local change' + (pending.length===1?'':'s') + (failed.length ? ' · ' + failed.length + ' failed' : '') + '.';
     const pill = $('#sync-status-pill');
     const errorEl = $('#sync-last-error');
-    const accountEl = $('#sync-account-status');
-    const configured = window.CinemaVaultSupabase?.configured?.();
-    let session = null;
-    try { if (configured) session = await window.CinemaVaultSupabase.session(); } catch (error) {
-      if (errorEl) errorEl.textContent = 'Supabase session error: ' + (error?.message || error);
-    }
     const syncState = await CinemaVaultSyncStateRepository.get('default');
-    if (accountEl) accountEl.textContent = !configured
-      ? 'Add your Supabase publishable key to enable private cloud sync.'
-      : session?.user ? 'Connected as ' + (session.user.email || 'verified account') + '.'
-      : 'Connection saved. Verify your email to enable cross-device sync.';
+    const attention = failed.length || syncState?.lastError;
     if (pill) {
-      pill.textContent = !configured ? 'Setup required' : !session?.user ? 'Email verification required' : failed.length ? 'Sync needs attention' : pending.length ? 'Changes waiting' : 'Connected';
-      pill.className = 'status-pill ' + (!configured || !session?.user ? 'pending' : failed.length ? 'pending' : 'local');
+      pill.textContent = attention ? 'Sync needs attention' : pending.length ? 'Changes waiting' : 'Connected';
+      pill.className = 'status-pill ' + (attention || pending.length ? 'pending' : 'local');
     }
-    if (errorEl && syncState?.lastError) errorEl.textContent = 'Last sync error: ' + syncState.lastError;
-    else if (errorEl && session?.user && !failed.length && !pending.length) errorEl.textContent = 'Your private library is up to date on this device.';
-    else if (errorEl && !session?.user) errorEl.textContent = 'Your changes remain local until you verify the same email used on your other devices.';
-  }
-
-  async function saveSupabaseConfig() {
-    try {
-      const url = $('#supabase-url')?.value.trim();
-      const key = $('#supabase-publishable-key')?.value.trim();
-      window.CinemaVaultSupabase.saveConfig(url, key);
-      toast('Supabase connection saved on this device.');
-      await updateQueueStatus();
-    } catch (error) {
-      toast('Could not save connection: ' + (error?.message || error));
+    if (errorEl) {
+      errorEl.textContent = syncState?.lastError
+        ? 'Last sync error: ' + syncState.lastError
+        : syncState?.lastSyncedAt
+          ? 'Last synced ' + new Date(syncState.lastSyncedAt).toLocaleString() + ' · ' + state.movies.length + ' titles on this device.'
+          : 'Waiting for the first sync…';
     }
   }
 
-  async function sendSyncLink() {
+  async function saveName() {
     try {
-      const url = $('#supabase-url')?.value.trim();
-      const key = $('#supabase-publishable-key')?.value.trim();
-      window.CinemaVaultSupabase.saveConfig(url, key);
-      const email = $('#sync-email')?.value.trim();
-      await window.CinemaVaultSupabase.sendMagicLink(email);
-      toast('Secure link sent. Check your email, then open it on this device.');
-      const account = $('#sync-account-status');
-      if (account) account.textContent = 'Secure link sent to ' + email + '. Open it to connect this device.';
-    } catch (error) {
-      console.error('[CinemaVault magic link]', error);
-      toast('Could not send secure link: ' + (error?.message || error));
-    }
-  }
-
-  async function uploadLocalLibrary() {
-    if (!confirm("Upload this browser's local library to the signed-in email account? This only works when that cloud account has no movies yet.")) return;
-    try {
-      const result = await window.CinemaVaultSyncEngine.uploadLocalLibrary();
-      await loadMovies();
+      const value = $('#display-name')?.value.trim();
+      if (!state.user) return;
+      await CinemaVaultSupabase.updateDisplayName(state.user.id, value);
+      toast('Name saved.');
       render();
-      toast(result.status === 'empty' ? 'There are no local movies to upload.' : 'Uploaded ' + result.imported + ' titles to your private cloud vault.');
-    } catch (error) {
-      console.error('[CinemaVault initial library upload]', error);
-      toast('Initial upload needs attention: ' + (error?.message || error));
-    }
+    } catch (error) { toast('Could not save name: ' + CinemaVaultSupabase.friendly(error)); }
+  }
+
+  async function changePassword() {
+    const input = $('#new-password');
+    const value = input?.value || '';
+    if (value.length < 8) return toast('Use at least 8 characters for your new password.');
+    try {
+      await CinemaVaultSupabase.updatePassword(value);
+      input.value = '';
+      toast('✓ Password updated.');
+    } catch (error) { toast(CinemaVaultSupabase.friendly(error), 5000); }
+  }
+
+  async function signOutFlow() {
+    try {
+      if (CinemaVaultAuth.canWrite()) {
+        await CinemaVaultSyncEngine.syncSafe().catch(() => {});
+        const left = (await CinemaVaultSyncQueue.list('pending')).length + (await CinemaVaultSyncQueue.list('failed')).length;
+        if (left && !confirm(left + ' change' + (left === 1 ? '' : 's') + ' on this device haven’t reached the cloud yet. Sign out and discard them?')) return;
+      }
+      state.signOutNotice = 'You’ve been signed out.';
+      await CinemaVaultSupabase.signOut();
+    } catch (error) { toast('Could not sign out: ' + CinemaVaultSupabase.friendly(error)); }
   }
 
   async function syncNow() {
     try {
       const result = await window.CinemaVaultSyncEngine.syncSafe({ retryFailed: true });
-      setCloud(result);
       if (result.status === 'synced') {
         await loadMovies();
         render();
         toast('Cloud sync complete.');
-      } else if (result.status === 'signed-out') {
-        toast('Verify your email first to sync across devices.');
-      } else if (result.status === 'not-configured') {
-        toast('Save your Supabase connection first.');
       } else {
         toast('Sync needs attention: ' + (result.error?.message || result.status));
       }
@@ -809,6 +791,7 @@
   }
 
   function route(route) {
+    if (route === 'add' && !CinemaVaultAuth.canWrite()) route = 'library';
     state.route = route;
     if (route !== 'genres') state.genre = null;
     window.scrollTo({top:0, behavior:'smooth'});
@@ -841,8 +824,9 @@
     $$('[data-action="search"]').forEach(el=>el.addEventListener('click',openSearch));
     $$('[data-action="close-search"]').forEach(el=>el.addEventListener('click',closeSearch));
     $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
-    $$('[data-action="save-supabase-config"]').forEach(el=>el.addEventListener('click',saveSupabaseConfig));
-    $$('[data-action="send-sync-link"]').forEach(el=>el.addEventListener('click',sendSyncLink));
+    $$('[data-action="save-name"]').forEach(el=>el.addEventListener('click',saveName));
+    $$('[data-action="change-password"]').forEach(el=>el.addEventListener('click',changePassword));
+    $$('[data-action="sign-out"]').forEach(el=>el.addEventListener('click',signOutFlow));
     $$('[data-action="sync-now"]').forEach(el=>el.addEventListener('click',syncNow));
     $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
@@ -856,25 +840,152 @@
   // Let the sync engine refresh UI state after remote records have been pulled.
   window.CinemaVaultAppRefresh = async function () {
     await loadMovies();
-    if (state.route !== 'add') render();
+    if (state.ready && state.route !== 'add') render();
   };
 
-  async function boot() {
-    await migrateLegacyData();
-    await CinemaVaultSyncQueue.resetProcessing();
-    await loadMovies();
-    render();
-    // Resume cloud sync after the initial local UI is ready; no separate login page is shown.
-    void window.CinemaVaultSyncEngine?.start?.()?.then(setCloud);
-    window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
+  /* ---------- sign-in gate ---------- */
+  const UID_KEY = 'cinemavault_local_uid';
+  let currentUserId = null;
+  let entering = null;
+  let recovering = false;
+  let globalsBound = false;
+  let authResolved = false;
+
+  function splash(text) {
+    $('#app').innerHTML = '<main class="splash"><div class="spinner"></div><p>' + esc(text) + '</p></main>';
+  }
+
+  function applyRole() {
+    document.body.classList.toggle('read-only', !CinemaVaultAuth.canWrite());
+  }
+
+  async function clearLocalState() {
+    try { await CinemaVaultDB.clearAll(); } catch (_) {}
+    state.movies = []; state.metadata.clear(); state.recommendation = null;
+    state.route = 'home'; state.genre = null; state.query = ''; state.selectedId = null;
+    state.libraryVisible = 60; state.bulkItems = []; state.ready = false;
+    try { localStorage.removeItem(UID_KEY); } catch (_) {}
+  }
+
+  function bindGlobalsOnce() {
+    if (globalsBound) return;
+    globalsBound = true;
+    window.addEventListener('keydown',e=>{if(!state.ready)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch();} if(e.key==='Escape'){closeSearch();if(!$('#detail-layer').hidden)closeDetail();}});
     window.addEventListener('scroll',()=>document.body.classList.toggle('scrolled',window.scrollY>28),{passive:true});
   }
 
-  boot().catch(error=>{
+  async function enterApp(session) {
+    const user = session.user;
+    if (currentUserId === user.id && state.ready) return;
+    if (entering) return entering;
+    entering = (async () => {
+      currentUserId = user.id;
+      state.user = user;
+      CinemaVaultAuthView.hide();
+      splash('Opening your vault…');
+
+      await CinemaVaultSupabase.loadProfile(user);
+      applyRole();
+
+      // Never mix two accounts' data in one browser cache — but never discard unsynced work either.
+      let storedUid = null;
+      try { storedUid = localStorage.getItem(UID_KEY); } catch (_) {}
+      if (storedUid && storedUid !== user.id) {
+        const unsynced = (await CinemaVaultSyncQueue.list('pending')).length;
+        if (!unsynced) await clearLocalState();
+      }
+      try { localStorage.setItem(UID_KEY, user.id); } catch (_) {}
+
+      if (CinemaVaultAuth.canWrite()) await migrateLegacyData();
+      await CinemaVaultSyncQueue.resetProcessing();
+      await loadMovies();
+
+      let synced = false;
+      if (!state.movies.length) {
+        // First visit on this device: download the library BEFORE the first paint so it never looks empty.
+        splash('Loading your library…');
+        const result = await CinemaVaultSyncEngine.syncSafe();
+        setCloud(result);
+        synced = result?.status === 'synced';
+        await loadMovies();
+      }
+
+      state.ready = true;
+      render();
+      bindGlobalsOnce();
+      if (state.justRecovered) { toast('✓ Password updated. You’re signed in.'); state.justRecovered = false; }
+      if (!synced) void CinemaVaultSyncEngine.start();
+    })().finally(() => { entering = null; });
+    return entering;
+  }
+
+  function authErrorFromUrl() {
+    const bag = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    const query = new URLSearchParams(location.search || '');
+    const description = bag.get('error_description') || query.get('error_description');
+    return description ? description.replace(/\+/g, ' ') : '';
+  }
+
+  function showLogin(options) {
+    state.ready = false;
+    CinemaVaultAuthView.show(options || {});
+  }
+
+  async function handleAuth(event, session) {
+    authResolved = true;
+    if (event === 'PASSWORD_RECOVERY' || (recovering && session?.user)) {
+      recovering = true;
+      showLogin({ view: 'recover', onRecovered: async () => {
+        recovering = false; state.justRecovered = true;
+        const fresh = await CinemaVaultSupabase.session();
+        if (fresh) enterApp(fresh); else showLogin({ notice: 'Password updated. Please sign in.' });
+      }});
+      return;
+    }
+    if (session?.user && ['INITIAL_SESSION', 'SIGNED_IN', 'USER_UPDATED'].includes(event)) {
+      await enterApp(session);
+      return;
+    }
+    if (event === 'INITIAL_SESSION' && !session) {
+      const problem = authErrorFromUrl();
+      showLogin({ notice: problem ? 'Sign-in problem: ' + problem : '', noticeKind: problem ? 'error' : '' });
+      return;
+    }
+    if (event === 'SIGNED_OUT') {
+      const notice = state.signOutNotice; state.signOutNotice = '';
+      await clearLocalState();
+      currentUserId = null;
+      state.user = null;
+      CinemaVaultAuth.profile = null;
+      applyRole();
+      showLogin({ notice });
+    }
+  }
+
+  async function boot() {
+    recovering = /type=recovery/.test(location.hash || '');
+    if (!CinemaVaultSupabase.configured()) throw new Error('The sign-in library could not load. Check your connection and reload.');
+    splash('Opening CinemaVault…');
+    // Supabase warns against awaiting other Supabase calls inside this callback, so hand off to a fresh task.
+    CinemaVaultSupabase.onAuthStateChange((event, session) => { setTimeout(() => { handleAuth(event, session).catch(fatal); }, 0); });
+    // Safety net in case the initial-session event never arrives.
+    setTimeout(async () => {
+      if (authResolved) return;
+      try {
+        const session = await CinemaVaultSupabase.session();
+        authResolved = true;
+        if (session?.user) await enterApp(session); else showLogin();
+      } catch (error) { showLogin({ notice: CinemaVaultSupabase.friendly(error), noticeKind: 'error' }); }
+    }, 2500);
+  }
+
+  function fatal(error) {
     console.error('[CinemaVault boot]', error);
     const app = $('#app');
     if (app) {
       app.innerHTML='<main class="fatal"><p class="eyebrow">CINEMAVAULT STARTUP ERROR</p><h1>CinemaVault could not open.</h1><p>'+esc(error?.message || String(error))+'</p><button class="primary-button" onclick="location.reload()">Reload</button></main>';
     }
-  });
+  }
+
+  boot().catch(fatal);
 })();
