@@ -59,6 +59,10 @@
     if (/rate limit|too many requests|over_email_send_rate_limit|over_sms_send_rate_limit/.test(text + code)) return 'Too many attempts. Please wait a few minutes and try again.';
     if (/password should be at least|weak_password|password is too weak/.test(text + code)) return 'Choose a stronger password (at least 8 characters, mixing letters and numbers).';
     if (/same password|different from the old/.test(text)) return 'Your new password must be different from the old one.';
+    if (/new email address should be different|same email/.test(text)) return 'That’s already your email address.';
+    if (/email_exists|already.*(registered|exists)|email address.*(taken|in use)/.test(text + code)) return 'Another account already uses that email address.';
+    if (/reauthentication|nonce/.test(text + code)) return 'For security, please sign in again and retry.';
+    if (/session.*(missing|not found)|not authenticated|jwt/.test(text + code)) return 'Your session has expired. Please sign in again.';
     if (/phone.*(provider|disabled|unsupported)|sms.*(provider|disabled)|phone_provider_disabled/.test(text + code)) return 'Phone sign-in isn’t switched on for this site yet.';
     if (/provider is not enabled|unsupported provider|provider_disabled/.test(text + code)) return 'That sign-in method isn’t switched on for this site yet.';
     if (/token has expired|otp_expired|invalid.*(token|otp)|otp.*invalid/.test(text + code)) return 'That code is wrong or has expired. Request a new one.';
@@ -167,6 +171,45 @@
     return data;
   }
 
+  /* ---------- account management ---------- */
+  // Checks a password WITHOUT touching the real session (separate, non-persisting client), so the app
+  // does not see a second sign-in and re-render.
+  async function verifyPassword(email, password) {
+    if (!global.supabase?.createClient) throw new Error('The sign-in library failed to load. Reload the page.');
+    const probe = global.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'cinemavault-verify' }
+    });
+    const { error } = await probe.auth.signInWithPassword({ email: String(email).trim(), password });
+    if (error) {
+      if (/invalid login credentials/i.test(error.message || '')) throw new Error('Your current password is incorrect.');
+      throw error;
+    }
+  }
+
+  async function changeEmail(newEmail) {
+    const { data, error } = await need().auth.updateUser({ email: String(newEmail).trim() }, { emailRedirectTo: redirectUrl() });
+    if (error) throw error;
+    return data.user;
+  }
+
+  async function resendEmailChange(newEmail) {
+    const { error } = await need().auth.resend({ type: 'email_change', email: String(newEmail).trim(), options: { emailRedirectTo: redirectUrl() } });
+    if (error) throw error;
+  }
+
+  async function refreshUser() {
+    const { data, error } = await need().auth.getUser();
+    if (error) throw error;
+    return data.user;
+  }
+
+  async function signOutEverywhere() {
+    const instance = getClient();
+    if (!instance) return;
+    const { error } = await instance.auth.signOut({ scope: 'global' });
+    if (error) throw error;
+  }
+
   async function signOut() {
     const instance = getClient();
     if (!instance) return;
@@ -223,7 +266,12 @@
     verifyPhoneCode,
     sendPasswordReset,
     updatePassword,
+    verifyPassword,
+    changeEmail,
+    resendEmailChange,
+    refreshUser,
     signOut,
+    signOutEverywhere,
     loadProfile,
     updateDisplayName
   });

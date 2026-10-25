@@ -43,7 +43,12 @@ module.exports = async function handler(req, res) {
   try {
     const upstream = await fetch('https://api.themoviedb.org/3' + path + '?' + params.toString(), { headers });
     const body = await upstream.text();
-    res.setHeader('Cache-Control', 'private, max-age=86400');
+    // A 401/403 from TMDB means the configured key is wrong. Never pass it through as 401, which the
+    // browser reads as "you are signed out".
+    if (upstream.status === 401 || upstream.status === 403) {
+      return res.status(502).json({ error: 'TMDB rejected the API key. Check the TMDB_API_KEY environment variable.' });
+    }
+    if (upstream.ok) res.setHeader('Cache-Control', 'private, max-age=86400');
     return res.status(upstream.status).send(body);
   } catch (error) {
     return res.status(502).json({ error: 'TMDB request failed.' });

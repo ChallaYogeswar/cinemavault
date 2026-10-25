@@ -104,5 +104,24 @@
     } catch (error) { return fallback(cleanTitle); }
   }
 
-  window.CinemaVaultMetadata = { fetchCinemaMetadata };
+  // Used by Settings to say plainly whether posters can load, and if not, why.
+  async function diagnose() {
+    const token = await accessToken();
+    if (!token) return { ok: false, message: 'Sign in to check the poster service.' };
+    let res;
+    try {
+      res = await fetch('/api/tmdb?' + new URLSearchParams({ path: '/search/multi', query: 'Inception' }), { headers: { Authorization: 'Bearer ' + token } });
+    } catch (_) {
+      return getApiKey() ? { ok: true, message: 'Using the TMDB key saved in this browser.' } : { ok: false, message: 'Could not reach this site’s poster service. Check your connection.' };
+    }
+    if (res.ok) { proxyState = 'ok'; return { ok: true, message: 'Poster service is working.' }; }
+    if (getApiKey()) return { ok: true, message: 'Server key unavailable, so this browser’s own TMDB key is being used.' };
+    if (res.status === 501) return { ok: false, message: 'The server has no TMDB key yet. In Vercel → Project → Settings → Environment Variables add TMDB_API_KEY (Production), then redeploy.' };
+    if (res.status === 404 || res.status === 405) return { ok: false, message: 'The /api/tmdb function is not deployed. Make sure the api/ folder is in the repository and redeploy.' };
+    if (res.status === 401) return { ok: false, message: 'Your sign-in expired. Sign out and back in.' };
+    if (res.status === 502) return { ok: false, message: 'TMDB rejected the key saved in Vercel (TMDB_API_KEY). Use the API Key (v3) or the Read Access Token from themoviedb.org → Settings → API.' };
+    return { ok: false, message: 'Poster service error (' + res.status + ').' };
+  }
+
+  window.CinemaVaultMetadata = { fetchCinemaMetadata, diagnose };
 }());

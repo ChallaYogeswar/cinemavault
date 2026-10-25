@@ -343,6 +343,28 @@
       '<div class="add-panel"><div class="panel-heading"><span>02</span><h2>Bulk titles</h2></div><textarea id="bulk-input" rows="12" placeholder="Paste one title per line. You can include year and genre information."></textarea><div class="panel-actions"><button class="ghost-button" data-action="parse-bulk">Parse locally</button><span id="bulk-status"></span></div><div id="bulk-preview"></div></div></section>';
   }
 
+  const PROVIDER_LABELS = { email: 'Email', phone: 'Phone', google: 'Google', github: 'GitHub', facebook: 'Facebook', apple: 'Apple' };
+  function signInMethods(user) {
+    return [...new Set((user?.identities || []).map(i => i.provider).filter(Boolean))];
+  }
+  function hasEmailLogin(user) { return signInMethods(user).includes('email'); }
+
+  function securityMarkup(user) {
+    const methods = signInMethods(user);
+    const needsCurrent = hasEmailLogin(user) && Boolean(user.email);
+    const pending = user.new_email
+      ? '<p class="notice-line">Waiting for you to confirm the change to <b>' + esc(user.new_email) + '</b>. Open the link in the email we sent' + (user.email ? ' (it may need confirming from both ' + esc(user.email) + ' and the new address)' : '') + '. <button type="button" class="text-button" data-action="resend-email-change">Resend</button></p>'
+      : '';
+    return '<p class="muted small">Sign-in methods: ' + (methods.length ? methods.map(m => '<span class="method-chip">' + esc(PROVIDER_LABELS[m] || m) + '</span>').join(' ') : '—') + '</p>' +
+      (needsCurrent ? '<label class="inline-field">Current password<input id="sec-current" type="password" autocomplete="current-password" placeholder="Needed to change email or password"></label>' : '') +
+      '<label class="inline-field">' + (user.email ? 'Change email' : 'Add an email address') + '<input id="new-email" type="email" autocomplete="email" placeholder="' + (user.email ? 'New email address' : 'you@example.com') + '"></label>' + pending +
+      '<div class="panel-actions"><button class="ghost-button" data-action="change-email">' + (user.email ? 'Change email' : 'Add email') + '</button></div>' +
+      '<label class="inline-field">' + (needsCurrent || !methods.length ? 'New password' : 'Set a password') + '<input id="new-password" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></label>' +
+      '<label class="inline-field">Confirm new password<input id="confirm-password" type="password" minlength="8" autocomplete="new-password" placeholder="Repeat it"></label>' +
+      '<div class="panel-actions"><button class="ghost-button" data-action="change-password">Update password</button>' + (user.email ? '<button class="ghost-button" data-action="send-reset">Email me a reset link</button>' : '') + '</div>' +
+      (needsCurrent ? '<p class="muted small">Forgot it, or signed up with a link/Google and never set one? Use “Email me a reset link”.</p>' : '');
+  }
+
   function settingsPage() {
     const user = state.user || {};
     const profile = CinemaVaultAuth.profile || {};
@@ -355,10 +377,11 @@
         '<div class="account-line"><span class="account-avatar">' + esc((name[0] || 'C').toUpperCase()) + '</span><div><b>' + esc(name) + '</b><small>' + esc(ident) + '</small></div></div>' +
         '<span class="role-badge ' + (viewer ? 'viewer' : 'owner') + '">' + (viewer ? 'Viewer · view only' : 'Owner · full access') + '</span>' +
         '<label class="inline-field">Display name<input id="display-name" type="text" maxlength="60" value="' + esc(profile.display_name || '') + '" placeholder="Your name"></label>' +
-        '<label class="inline-field">New password<input id="new-password" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></label>' +
-        '<div class="panel-actions"><button class="ghost-button" data-action="save-name">Save name</button><button class="ghost-button" data-action="change-password">Change password</button><button class="danger-button" data-action="sign-out">Sign out</button></div></div>' +
+        '<div class="panel-actions"><button class="ghost-button" data-action="save-name">Save name</button><button class="danger-button" data-action="sign-out">Sign out</button></div>' +
+        '<p class="muted small">Lost a device? <button type="button" class="text-button" data-action="sign-out-all">Sign out of all devices</button></p></div>' +
+      '<div class="settings-panel security-panel"><span class="settings-icon">⚿</span><h2>Sign-in &amp; security</h2>' + securityMarkup(user) + '</div>' +
       '<div class="settings-panel"><span class="settings-icon">↗</span><h2>Cloud sync</h2><p id="queue-status">Checking local changes…</p><span id="sync-status-pill" class="status-pill pending">Checking…</span><p id="sync-last-error" class="muted">—</p><div class="panel-actions"><button class="ghost-button" data-action="sync-now">' + (viewer ? 'Refresh from cloud' : 'Sync now') + '</button></div></div>' +
-      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Posters &amp; trailers</h2><p>Posters, backdrops and trailers load automatically for everyone who signs in — no key to enter on any device.</p><details><summary>Advanced: use my own TMDB key on this browser</summary><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Only needed if the site’s server key isn’t set up"></label><button class="ghost-button" data-action="save-key">Save key</button></details></div>' +
+      '<div class="settings-panel"><span class="settings-icon">◉</span><h2>Posters &amp; trailers</h2><p>Posters, backdrops and trailers load automatically for everyone who signs in — no key to enter on any device.</p><p id="poster-status" class="muted small">Checking…</p><div class="panel-actions"><button class="ghost-button" data-action="test-posters">Test poster service</button></div><details><summary>Advanced: use my own TMDB key on this browser</summary><label class="inline-field">TMDB API key<input id="tmdb-key" type="password" placeholder="Only needed if the site’s server key isn’t set up"></label><button class="ghost-button" data-action="save-key">Save key</button></details></div>' +
       '<div class="settings-panel danger-panel"><span class="settings-icon">⌫</span><h2>Clear local copy</h2><p>Removes the copy of the vault stored in this browser. Your cloud library is not touched, and it re-downloads next time you open the site.</p><button class="danger-button" data-action="clear-all">Clear local data</button></div>' +
       '</section>';
   }
@@ -391,7 +414,7 @@
     reveal();
     if (state.route === 'home') renderHomeRecommendation();
     if (state.route === 'discover') { renderDiscoverRecommendation(); renderHistory(); }
-    if (state.route === 'settings') updateQueueStatus();
+    if (state.route === 'settings') { updateQueueStatus(); testPosters(); }
     enrichCards();
     preloadHero();
   }
@@ -699,6 +722,16 @@
     }
   }
 
+  async function testPosters(manual) {
+    const box = $('#poster-status');
+    if (box) box.textContent = 'Checking…';
+    let result;
+    try { result = await window.CinemaVaultMetadata.diagnose(); } catch (e) { result = { ok: false, message: String(e?.message || e) }; }
+    const target = $('#poster-status');
+    if (target) { target.textContent = (result.ok ? '✓ ' : '✕ ') + result.message; target.style.color = result.ok ? '' : '#f6aaa4'; }
+    if (manual === true && result.ok) { state.metadata.clear(); toast('Poster service is working — reloading posters.'); render(); }
+  }
+
   async function saveName() {
     try {
       const value = $('#display-name')?.value.trim();
@@ -709,15 +742,61 @@
     } catch (error) { toast('Could not save name: ' + CinemaVaultSupabase.friendly(error)); }
   }
 
+  async function requireCurrentPassword() {
+    const user = state.user;
+    if (!(hasEmailLogin(user) && user.email)) return true;
+    const current = $('#sec-current')?.value || '';
+    if (!current) { toast('Enter your current password first (or use “Email me a reset link”).', 5000); return false; }
+    await CinemaVaultSupabase.verifyPassword(user.email, current);
+    return true;
+  }
+
   async function changePassword() {
-    const input = $('#new-password');
-    const value = input?.value || '';
+    const value = $('#new-password')?.value || '';
+    const confirmValue = $('#confirm-password')?.value || '';
     if (value.length < 8) return toast('Use at least 8 characters for your new password.');
+    if (value !== confirmValue) return toast('The two new passwords don’t match.');
     try {
+      if (!(await requireCurrentPassword())) return;
       await CinemaVaultSupabase.updatePassword(value);
-      input.value = '';
+      ['#new-password', '#confirm-password', '#sec-current'].forEach(sel => { const el = $(sel); if (el) el.value = ''; });
       toast('✓ Password updated.');
     } catch (error) { toast(CinemaVaultSupabase.friendly(error), 5000); }
+  }
+
+  async function changeEmail() {
+    const next = ($('#new-email')?.value || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(next)) return toast('Enter a valid email address.');
+    if (next.toLowerCase() === String(state.user?.email || '').toLowerCase()) return toast('That’s already your email address.');
+    try {
+      if (!(await requireCurrentPassword())) return;
+      await CinemaVaultSupabase.changeEmail(next);
+      try { state.user = await CinemaVaultSupabase.refreshUser(); } catch (_) {}
+      toast('Confirmation email sent to ' + next + (state.user?.email ? '. You may also need to approve it from ' + state.user.email : '') + '. Your sign-in email changes once confirmed.', 9000);
+      render();
+    } catch (error) { toast(CinemaVaultSupabase.friendly(error), 6000); }
+  }
+
+  async function resendEmailChange() {
+    const target = state.user?.new_email;
+    if (!target) return;
+    try { await CinemaVaultSupabase.resendEmailChange(target); toast('Confirmation email re-sent to ' + target + '.'); }
+    catch (error) { toast(CinemaVaultSupabase.friendly(error), 5000); }
+  }
+
+  async function sendResetLink() {
+    const email = state.user?.email;
+    if (!email) return;
+    try { await CinemaVaultSupabase.sendPasswordReset(email); toast('Reset link sent to ' + email + '. Open it to choose a new password.', 7000); }
+    catch (error) { toast(CinemaVaultSupabase.friendly(error), 5000); }
+  }
+
+  async function signOutAll() {
+    if (!confirm('Sign out of CinemaVault on every device, including this one?')) return;
+    try {
+      state.signOutNotice = 'You’ve been signed out of all devices.';
+      await CinemaVaultSupabase.signOutEverywhere();
+    } catch (error) { toast('Could not sign out everywhere: ' + CinemaVaultSupabase.friendly(error)); }
   }
 
   async function signOutFlow() {
@@ -826,6 +905,11 @@
     $$('[data-action="save-key"]').forEach(el=>el.addEventListener('click',saveKey));
     $$('[data-action="save-name"]').forEach(el=>el.addEventListener('click',saveName));
     $$('[data-action="change-password"]').forEach(el=>el.addEventListener('click',changePassword));
+    $$('[data-action="test-posters"]').forEach(el=>el.addEventListener('click',()=>testPosters(true)));
+    $$('[data-action="change-email"]').forEach(el=>el.addEventListener('click',changeEmail));
+    $$('[data-action="resend-email-change"]').forEach(el=>el.addEventListener('click',resendEmailChange));
+    $$('[data-action="send-reset"]').forEach(el=>el.addEventListener('click',sendResetLink));
+    $$('[data-action="sign-out-all"]').forEach(el=>el.addEventListener('click',signOutAll));
     $$('[data-action="sign-out"]').forEach(el=>el.addEventListener('click',signOutFlow));
     $$('[data-action="sync-now"]').forEach(el=>el.addEventListener('click',syncNow));
     $$('[data-action="clear-all"]').forEach(el=>el.addEventListener('click',clearAll));
@@ -926,6 +1010,14 @@
     return description ? description.replace(/\+/g, ' ') : '';
   }
 
+  // Supabase reports some outcomes (e.g. "confirm the link sent to your other address") as #message=...
+  function urlMessage() {
+    const bag = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    const query = new URLSearchParams(location.search || '');
+    const text = bag.get('message') || query.get('message') || '';
+    return text.replace(/\+/g, ' ');
+  }
+
   function showLogin(options) {
     state.ready = false;
     CinemaVaultAuthView.show(options || {});
@@ -942,13 +1034,22 @@
       }});
       return;
     }
+    if (event === 'USER_UPDATED' && session?.user && state.ready && currentUserId === session.user.id) {
+      const before = String(state.user?.email || '');
+      state.user = session.user;
+      if (before && session.user.email && before !== session.user.email) toast('✓ Your email address is now ' + session.user.email + '.', 7000);
+      if (state.route === 'settings') render();
+      return;
+    }
     if (session?.user && ['INITIAL_SESSION', 'SIGNED_IN', 'USER_UPDATED'].includes(event)) {
       await enterApp(session);
+      const note = urlMessage();
+      if (note) toast(note, 7000);
       return;
     }
     if (event === 'INITIAL_SESSION' && !session) {
       const problem = authErrorFromUrl();
-      showLogin({ notice: problem ? 'Sign-in problem: ' + problem : '', noticeKind: problem ? 'error' : '' });
+      showLogin({ notice: problem ? 'Sign-in problem: ' + problem : urlMessage(), noticeKind: problem ? 'error' : '' });
       return;
     }
     if (event === 'SIGNED_OUT') {
