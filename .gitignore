@@ -4,3 +4,8 @@
 /.mcp.json
 /.vscode/mcp.json
 /skills-lock.json
+
+# Local environment files may contain API keys or other credentials.
+.env
+.env.*
+!.env.example

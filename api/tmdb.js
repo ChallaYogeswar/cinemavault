@@ -23,7 +23,7 @@ module.exports = async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  const key = process.env.TMDB_API_KEY;
+  const key = process.env.TMDB_API_KEY?.trim() || process.env.TMDB?.trim();
   if (!key) return res.status(501).json({ error: 'TMDB_API_KEY is not configured on the server.' });
 
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');

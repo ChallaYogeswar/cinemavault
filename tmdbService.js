@@ -79,7 +79,12 @@
       const searchResponse = await tmdb('/search/multi', { query: cleanTitle });
       if (!searchResponse) return fallback(cleanTitle); // no proxy and no personal key: don't cache the miss
       if (!searchResponse.ok) throw new Error('TMDB search failed');
-      const searchData = await searchResponse.json();
+      let searchData = await searchResponse.json();
+      // Titles such as "#Alive" or "(500) Days of Summer" can miss on TMDB: retry once without the leading symbols.
+      if (!(searchData.results||[]).length && /^[^\p{L}\p{N}]+/u.test(cleanTitle)) {
+        const bare = cleanTitle.replace(/^[^\p{L}\p{N}]+/u, '').trim();
+        if (bare) { const retry = await tmdb('/search/multi', { query: bare }); if (retry && retry.ok) searchData = await retry.json(); }
+      }
       const results=(searchData.results||[]).filter(r=>r.media_type==='movie'||r.media_type==='tv');
       const item=chooseResult(results,year);
       if(!item)return fallback(cleanTitle);

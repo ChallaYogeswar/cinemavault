@@ -1,0 +1,79 @@
+name: next-ci
+
+# Quality gate for the parallel rewrite in next/. It never touches the root application or any database.
+on:
+  push:
+    paths: ["next/**", ".github/workflows/next-ci.yml"]
+  pull_request:
+    paths: ["next/**", ".github/workflows/next-ci.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: next-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: next
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: next/package-lock.json
+
+      - name: Install (exact, from the lockfile)
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Formatting
+        run: npm run format:check
+
+      - name: Unit and component tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Guard - no server credentials in the browser bundle
+        run: npm run check:bundle
+
+  # Real Chromium against the production build, with a fake Supabase server: offline reload through
+  # the service worker, saved-library banner, expired token offline, revoked session, account switch,
+  # app update, Cache Storage contents. No real database or key is involved.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: next
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: next/package-lock.json
+
+      - name: Install (exact, from the lockfile)
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser end-to-end checks
+        run: npm run e2e

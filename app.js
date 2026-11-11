@@ -507,12 +507,28 @@
     bindDetail(layer);
   }
 
+  const RATING_EMOJI = ['😐', '🙂', '👍', '🔥', '💯'];
+  const RATING_WORDS = ['Meh', 'Fine', 'Good', 'Great', 'Masterpiece'];
+  function ratingReadout(n) { return n ? RATING_EMOJI[n - 1] + ' ' + n + '/5 · ' + RATING_WORDS[n - 1] : 'Not rated'; }
+
+  function paintRating(layer) {
+    const n = state.selectedRating || 0;
+    $$('[data-rating]', layer).forEach(btn => {
+      const v = Number(btn.dataset.rating);
+      btn.classList.toggle('filled', v <= n);
+      btn.classList.toggle('active', v === n);
+      btn.setAttribute('aria-checked', String(v === n));
+    });
+    const readout = $('#rating-readout', layer); if (readout) readout.textContent = ratingReadout(n);
+    const clear = $('[data-action="clear-rating"]', layer); if (clear) clear.hidden = !n;
+  }
+
   function detailMarkup(movie, meta) {
     const rating = Number(movie.user_rating || 0);
     return '<div class="detail-backdrop" style="' + (meta?.backdrop ? 'background-image:linear-gradient(90deg,rgba(7,8,10,.98) 0%,rgba(7,8,10,.82) 45%,rgba(7,8,10,.48) 100%),url(' + esc(meta.backdrop) + ')' : '') + '"></div>' +
-      '<div class="detail-panel"><button class="close-button" data-action="close-detail">×</button><div class="detail-hero"><div class="detail-poster">' + posterMarkup(movie, meta) + '</div><div class="detail-copy"><p class="eyebrow">FILM RECORD</p><h1>' + esc(movie.title) + '</h1><p class="detail-meta">' + esc([movie.year || '—', movie.media_type === 'tv' ? 'Series' : 'Movie', formatRuntime(movie.runtime_minutes)].filter(Boolean).join(' · ')) + '</p><div class="detail-genres">' + genres(movie).map(g=>'<span>'+esc(g)+'</span>').join('') + '</div>' + (meta?.overview ? '<p class="overview">' + esc(meta.overview) + '</p>' : '') + (meta?.trailer ? '<button class="ghost-button" data-action="trailer">Watch trailer ↗</button>' : '') + '</div></div>' +
+      '<div class="detail-panel"><button class="close-button" data-action="close-detail">×</button><div class="detail-hero"><div class="detail-poster">' + posterMarkup(movie, meta) + '</div><div class="detail-copy"><p class="eyebrow">FILM RECORD</p><h1>' + esc(movie.title) + '</h1><p class="detail-meta">' + esc([movie.year || '—', movie.media_type === 'tv' ? 'Series' : 'Movie', formatRuntime(movie.runtime_minutes)].filter(Boolean).join(' · ')) + '</p><div class="detail-genres">' + genres(movie).map(g=>'<span>'+esc(g)+'</span>').join('') + '</div>' + (CinemaVaultAuth.canWrite() ? editFormMarkup(movie) : '') + (meta?.overview ? '<p class="overview">' + esc(meta.overview) + '</p>' : '') + (meta?.trailer ? '<button class="ghost-button" data-action="trailer">Watch trailer ↗</button> ' : '') + (CinemaVaultAuth.canWrite() ? '<button class="ghost-button" data-action="edit-details">✎ Edit details</button>' : '') + '</div></div>' +
       (CinemaVaultAuth.canWrite() ? '' : readOnlyRecord(movie, rating)) +
-      (!CinemaVaultAuth.canWrite() ? '' : '<div class="record-section"><p class="eyebrow">YOUR RECORD</p><h2>How did it feel?</h2><div class="rating-row">' + [1,2,3,4,5].map(n=>'<button class="rating-choice ' + (rating===n?'active':'') + '" data-rating="'+n+'" aria-label="Rating '+n+'">' + ['😐','🙂','👍','🔥','💯'][n-1] + '</button>').join('') + '</div><div class="watch-line"><label><input id="detail-watched" type="checkbox" ' + (movie.watched?'checked':'') + '> <span>Mark as watched</span></label><label>Watched on<input id="detail-date" type="date" value="' + esc(movie.watched_on || '') + '"></label></div><div class="record-grid"><label>Verdict<textarea id="detail-verdict" rows="3" placeholder="Your take…">' + esc(movie.verdict) + '</textarea></label><label>Technical notes<textarea id="detail-technical" rows="3" placeholder="VFX, cinematography, sound, editing…">' + esc(movie.technical_notes) + '</textarea></label></div><div class="detail-actions"><button class="primary-button" data-action="save-detail">Save record</button><button class="danger-button" data-action="delete-detail">Remove from vault</button></div></div>') + '</div>';
+      (!CinemaVaultAuth.canWrite() ? '' : '<div class="record-section"><p class="eyebrow">YOUR RECORD</p><div class="rating-head"><h2>How did it feel?</h2><span class="rating-readout" id="rating-readout">' + ratingReadout(rating) + '</span></div><div class="rating-scale" role="radiogroup" aria-label="Your rating">' + [1,2,3,4,5].map(n=>'<button type="button" class="rating-choice ' + (rating>=n?'filled ':'') + (rating===n?'active':'') + '" role="radio" aria-checked="' + (rating===n) + '" data-rating="'+n+'" aria-label="' + n + ' of 5, ' + RATING_WORDS[n-1] + '"><span class="r-bar"></span><span class="r-emoji">' + RATING_EMOJI[n-1] + '</span><span class="r-word">' + RATING_WORDS[n-1] + '</span></button>').join('') + '</div><button type="button" class="text-button rating-clear" data-action="clear-rating"' + (rating ? '' : ' hidden') + '>✕ Clear my rating</button></div><div class="watch-line"><label><input id="detail-watched" type="checkbox" ' + (movie.watched?'checked':'') + '> <span>Mark as watched</span></label><label>Watched on<input id="detail-date" type="date" value="' + esc(movie.watched_on || '') + '"></label></div><div class="record-grid"><label>Verdict<textarea id="detail-verdict" rows="3" placeholder="Your take…">' + esc(movie.verdict) + '</textarea></label><label>Technical notes<textarea id="detail-technical" rows="3" placeholder="VFX, cinematography, sound, editing…">' + esc(movie.technical_notes) + '</textarea></label></div><div class="detail-actions"><button class="primary-button" data-action="save-detail">Save record</button><button class="danger-button" data-action="delete-detail">Remove from vault</button></div></div>') + '</div>';
   }
 
   function readOnlyRecord(movie, rating) {
@@ -528,10 +544,16 @@
   function bindDetail(layer) {
     $('[data-action="close-detail"]', layer)?.addEventListener('click', closeDetail);
     layer.addEventListener('click', e => { if (e.target === layer) closeDetail(); });
+    // Click a rating to set it; click the same one again (or "Clear my rating") to take it back.
     $$('[data-rating]', layer).forEach(btn => btn.addEventListener('click', () => {
-      state.selectedRating = Number(btn.dataset.rating);
-      $$('[data-rating]', layer).forEach(x=>x.classList.toggle('active', x === btn));
+      const v = Number(btn.dataset.rating);
+      state.selectedRating = state.selectedRating === v ? 0 : v;
+      paintRating(layer);
     }));
+    $('[data-action="clear-rating"]', layer)?.addEventListener('click', () => { state.selectedRating = 0; paintRating(layer); });
+    $('[data-action="edit-details"]', layer)?.addEventListener('click', () => toggleEdit(layer, true));
+    $('[data-action="cancel-edit"]', layer)?.addEventListener('click', () => toggleEdit(layer, false));
+    $('#edit-form', layer)?.addEventListener('submit', e => { e.preventDefault(); saveDetails(); });
     $('[data-action="save-detail"]', layer)?.addEventListener('click', saveDetail);
     $('[data-action="delete-detail"]', layer)?.addEventListener('click', deleteDetail);
     $('[data-action="trailer"]', layer)?.addEventListener('click', () => {
@@ -539,6 +561,65 @@
       const meta = state.metadata.get(movie?.id);
       if (meta?.trailer) window.open('https://www.youtube.com/watch?v=' + encodeURIComponent(meta.trailer), '_blank', 'noopener,noreferrer');
     });
+  }
+
+  function editFormMarkup(movie) {
+    return '<form id="edit-form" class="edit-form" hidden autocomplete="off">' +
+      '<label>Title<input id="edit-title" type="text" maxlength="200" required value="' + esc(movie.title) + '"></label>' +
+      '<div class="edit-row">' +
+        '<label>Year<input id="edit-year" type="number" min="1870" max="2100" value="' + esc(movie.year ?? '') + '" placeholder="2023"></label>' +
+        '<label>Type<select id="edit-type"><option value="movie"' + (movie.media_type === 'tv' ? '' : ' selected') + '>Movie</option><option value="tv"' + (movie.media_type === 'tv' ? ' selected' : '') + '>Series</option></select></label>' +
+        '<label>Runtime<input id="edit-runtime" type="text" value="' + esc(formatRuntime(movie.runtime_minutes)) + '" placeholder="2h 10m or 130"></label>' +
+      '</div>' +
+      '<label>Genres <small>(comma separated)</small><input id="edit-genre" type="text" value="' + esc(movie.genre || '') + '" placeholder="Drama, Thriller"></label>' +
+      '<div class="detail-actions"><button class="primary-button" type="submit">Save details</button><button class="ghost-button" type="button" data-action="cancel-edit">Cancel</button></div>' +
+    '</form>';
+  }
+
+  function toggleEdit(layer, on) {
+    const form = $('#edit-form', layer);
+    if (!form) return;
+    form.hidden = !on;
+    $('[data-action="edit-details"]', layer).hidden = on;
+    if (on) $('#edit-title', layer).focus();
+  }
+
+  async function saveDetails() {
+    const movie = state.movies.find(m=>m.id===state.selectedId);
+    if (!movie || !CinemaVaultAuth.canWrite()) return;
+    const title = $('#edit-title').value.trim().replace(/\s+/g, ' ');
+    if (!title) return toast('A title can’t be empty.');
+    const yearRaw = $('#edit-year').value.trim();
+    const year = yearRaw === '' ? null : Number(yearRaw);
+    if (year != null && (!Number.isInteger(year) || year < 1870 || year > 2100)) return toast('Enter a valid year, or leave it blank.');
+    const mediaType = $('#edit-type').value === 'tv' ? 'tv' : 'movie';
+    const runtimeText = $('#edit-runtime').value.trim();
+    const runtime = runtimeText === '' ? null : (/[hm]/i.test(runtimeText) ? runtimeMinutes(runtimeText) : Number(runtimeText));
+    if (runtime != null && (!Number.isFinite(runtime) || runtime < 0)) return toast('Runtime should look like 2h 10m or 130.');
+    const genre = $('#edit-genre').value.split(',').map(g => g.trim()).filter(Boolean).join(', ');
+
+    // The vault allows one entry per title + type + year, so refuse an edit that would collide with another entry.
+    const clash = await CinemaVaultMovieRepository.findDuplicate({ title, media_type: mediaType, year });
+    if (clash && clash.id !== movie.id) return toast('“' + clash.title + '” (' + (clash.year || 'no year') + ') is already in your vault.', 4500);
+
+    const normalized = CinemaVaultMovieRepository.normalizeTitle(title);
+    const identityChanged = normalized !== movie.normalized_title || mediaType !== movie.media_type || year !== (movie.year ?? null);
+    try {
+      const saved = await CinemaVaultLocalFirstRepository.saveMovie({
+        ...movie, title, normalized_title: normalized,
+        year, media_type: mediaType, genre: genre || null, runtime_minutes: runtime || null
+      });
+      state.movies = state.movies.map(m => m.id === saved.id ? saved : m);
+      // A different title/year/type may match a different TMDB entry, so drop the cached poster and look it up again.
+      if (identityChanged) {
+        state.metadata.delete(saved.id);
+        try { await CinemaVaultMetadataRepository.remove(saved.id); } catch (_) {}
+      }
+      state.recommendation = null;
+      toast('✓ Details updated.');
+      render();
+      await openMovie(saved.id);
+    } catch (error) { toast('Could not save: ' + (error?.message || error), 5000); }
   }
 
   async function saveDetail() {
