@@ -327,3 +327,30 @@ A render error or a failed chunk download shows an alert with Reload and "Go to 
 - Skip link moves focus to `<main tabindex="-1">` without a history entry. A `#main-content` entry made Back (and so closing a title dialog) leave focus on the page body.
 - Phone navigation: the five sections share one row equally and fit at 320 px; with very large text the row scrolls rather than clips.
 - Not covered by automation: reading order, wording, and real screen-reader behaviour. See the manual items in the release checklist.
+
+## M6: transfer, offline editing, cutover tooling, hardening
+
+### Export / import (`src/domain/transfer.ts`, `src/features/settings`)
+
+JSON (canonical field order, SHA-256 over the content) and CSV export; CSV cells that start with `= + - @ tab CR` are prefixed so a spreadsheet shows text, not a formula. Import reads JSON or CSV (an `.xlsx` must be saved as CSV first), builds a **preview** (new, duplicates incl. the F9/F2 spellings, invalid rows with reasons, JSON checksum result) and then only **adds** via `createMany`. Limits: 5 MB, 10,000 rows. Nothing is merged, overwritten or deleted by importing.
+
+### Offline editing (`src/domain/outbox.ts`, `src/data/sync`, `src/features/sync`)
+
+Online-first stays the rule. A write is **queued on the device** only when (a) the server cannot be reached, or (b) the screen is showing the saved copy, or (c) that title already has a queued change (order must be kept).
+
+- **One entry per title** (`coalesce`): create+edit → one create; create+delete → nothing; edit+edit → one edit with the *oldest* base version and the newest values; edit+delete → one delete. An entry waiting for a decision refuses further changes to that title.
+- **Idempotent replay** (`flushOutbox`): a create carries a client-generated id (a repeat is a primary-key conflict that is recognised as "already saved"); an edit/delete carries `baseUpdatedAt` and is refused by the server if the title moved on; an edit whose values the server already holds is treated as done (lost reply); deleting something already gone is done. Only connection problems stop a run; a change the server refuses is kept as **"Needs review"** and never blocks the rest. If the title changed again *while* sending, the newer change stays and is re-based.
+- **Never overwrites silently.** A conflict becomes a decision in the "Sync issues" dialog: *Keep my version* (re-sent against the server's current version) / *Use the other version* (discard mine). Duplicates and deleted-elsewhere have their own wording.
+- **Display only:** the queue is laid over the list by a `select` in `useMoviesQuery`; the loaded and saved copies stay server-pure, so optimistic data is never persisted as if confirmed.
+- **When it runs** (`SyncProvider`): on start, on `online`, when the tab becomes visible, every 30 s while changes wait, and after each queued change; never when `navigator.onLine` is false; one sender at a time (one follow-up run at most).
+- **Storage:** Dexie schema v4 adds `outbox` (keyed by title id) and `session` (last confirmed role) to the per-account database, so both are wiped with it. A damaged or expired saved *library* no longer takes the queue with it.
+- **Offline role:** the last role the server confirmed is kept (max 30 days) and used **only** when the role lookup fails with a network error; any other failure is still fail-closed (viewer). It is a UI convenience: RLS decides at replay.
+- **Sign-out:** with unsent changes the sign-out asks first. A sign-out ended by the *server* (revoked session) still wipes the account's database, queue included — see decision in `release-checklist.md`.
+
+### Cutover tooling (`scripts/data-gate.mjs`, `scripts/rehearsal-lib.mjs`, `docs/cutover-runbook.md`)
+
+A read-only integrity gate (13 hard checks and 3 informational notes, the same duplicate rule as the app) with optional "identical to this backup" proof; the existing rehearsal tool copies, reads back and compares every field on the **development** project only. The runbook turns these into go/no-go rows, a timed cutover table, a smoke test and a rollback table.
+
+### Hardening (`docs/hardening.md`)
+
+Content-Security-Policy and headers from one module (`security/policy.mjs`, synced into `vercel.json`, enforced in the E2E); TMDB proxy rate limits (per address, per user; per instance); third-party code split into five cached vendor files with size budgets in `check:bundle`; an app-level `ErrorBoundary` and a scrubbed, pluggable `errorReporter` hook (no vendor wired).

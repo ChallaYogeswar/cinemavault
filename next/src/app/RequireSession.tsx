@@ -3,6 +3,8 @@ import { FullPageStatus } from '@/components/ui/FullPageStatus';
 import { Button } from '@/components/ui/Button';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLibrarySource } from '@/features/library/queries';
+import { SyncProvider } from '@/features/sync/SyncProvider';
+import { SyncStatus } from '@/features/sync/SyncStatus';
 import { describeAge } from '@/features/library/format';
 import { moviesKey } from './privateKey';
 import { useAuth } from './auth/auth';
@@ -30,7 +32,10 @@ function StatusBanners() {
         >
           <span>
             Can’t reach the server — showing your library as saved{' '}
-            {describeAge(source.at, new Date())}. Adding, editing and deleting need a connection.
+            {describeAge(source.at, new Date())}.{' '}
+            {runtime.outbox
+              ? 'You can still add, edit and delete: changes are kept on this device and sync when you’re back online.'
+              : 'Adding, editing and deleting need a connection.'}
           </span>
           <Button
             variant="secondary"
@@ -47,7 +52,7 @@ function StatusBanners() {
           Preview mode — sample data only. Nothing here is your real library.
         </p>
       ) : null}
-      {session.roleVerified || savedCopy ? null : (
+      {session.roleVerified || session.roleFromDevice || savedCopy ? null : (
         <div
           role="alert"
           className="bg-danger/10 flex flex-wrap items-center justify-center gap-3 px-4 py-2 text-center text-sm"
@@ -81,8 +86,11 @@ export function RequireSession() {
       return (
         <SignedInSession user={state.user}>
           <RuntimeRepositoryProvider>
-            <StatusBanners />
-            <Outlet />
+            <SyncProvider>
+              <StatusBanners />
+              <SyncStatus />
+              <Outlet />
+            </SyncProvider>
           </RuntimeRepositoryProvider>
         </SignedInSession>
       );

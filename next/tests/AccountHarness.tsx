@@ -90,6 +90,8 @@ export function renderAccounts({
     libraryCache: null,
     history: null,
     snoozes: null,
+    outbox: null,
+    roles: null,
     metadata: null,
     repositoryFor: () => {
       throw new Error('the harness supplies repositories itself');

@@ -14,7 +14,9 @@ const TYPES = {
 };
 
 // `api(req, res, url)` stands in for the host's serverless functions (`/api/*`), if given.
-export function createStaticServer(initialRoot, api) {
+// `options.headers` are sent on every file, as the host's `vercel.json` headers would be.
+export function createStaticServer(initialRoot, api, options = {}) {
+  const extraHeaders = options.headers ?? {};
   let root = initialRoot;
   let down = false;
   const server = http.createServer((req, res) => {
@@ -33,6 +35,7 @@ export function createStaticServer(initialRoot, api) {
     const noStore =
       file.endsWith('sw.js') || file.endsWith('index.html') || file.endsWith('.webmanifest');
     res.writeHead(200, {
+      ...extraHeaders,
       'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream',
       'Cache-Control': noStore ? 'no-cache' : 'public, max-age=31536000, immutable',
     });

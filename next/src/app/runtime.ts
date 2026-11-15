@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { HistoryStore, SnoozeStore } from '@/data/local/deviceData';
+import type { OutboxStore, RoleStore } from '@/data/local/outboxStore';
 import type { LibraryCache } from '@/data/local/libraryCache';
 import type { MovieRepository } from '@/data/repositories/movieRepository';
 import type { ProfileRepository } from '@/data/repositories/profileRepository';
@@ -22,6 +23,13 @@ export interface Runtime {
   readonly snoozes: SnoozeStore | null;
   /** Poster and trailer lookups, kept per account on this device. Null on sample data. */
   readonly metadata: MetadataService | null;
+  /**
+   * Changes made while the server could not be reached, kept per account on this device and sent
+   * when it can. Null on sample data (nothing is kept on the device), where writes stay online-only.
+   */
+  readonly outbox: OutboxStore | null;
+  /** The access level this device last confirmed, so an owner can keep working offline. Null on sample data. */
+  readonly roles: RoleStore | null;
   /** Null on sample data, where the role comes from the preview controls instead. */
   readonly profiles: ProfileRepository | null;
 }

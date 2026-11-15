@@ -11,6 +11,12 @@ export interface Session {
   readonly getRole: () => Role;
   /** False when the profile could not be read, so the role is the safe default, not a fact. */
   readonly roleVerified: boolean;
+  /**
+   * True when the server could not be reached and the role is what this device last confirmed
+   * (so an owner can keep working offline). `roleVerified` is false then too; the server checks
+   * every change again when it is sent.
+   */
+  readonly roleFromDevice: boolean;
   /** Tries to verify the role again after a failure. */
   readonly retryRole: () => void;
   /** The signed-in account. Private cached data is keyed by it (see privateKey.ts). */

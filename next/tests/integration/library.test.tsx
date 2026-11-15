@@ -573,8 +573,7 @@ describe('unsaved-changes guard (every way out of a dirty form)', () => {
 describe('edit a title', () => {
   const openEdit = async (user: ReturnType<typeof renderApp>['user'], name: string) => {
     await user.click(await card(name));
-    const detail = await dialog();
-    await user.click(within(detail).getByRole('link', { name: /edit details/i }));
+    await user.click(within(await dialog()).getByRole('link', { name: /edit details/i }));
     return screen.findByRole('dialog', { name: /edit/i });
   };
 

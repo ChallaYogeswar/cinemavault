@@ -48,8 +48,11 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Guard - no server credentials in the browser bundle
+      - name: Guard - no server credentials in the browser bundle, and size budgets
         run: npm run check:bundle
+
+      - name: Guard - vercel.json security headers match security/policy.mjs
+        run: npm run check:headers
 
   # Real Chromium against the production build, with a fake Supabase server: offline reload through
   # the service worker, saved-library banner, expired token offline, revoked session, account switch,
@@ -75,5 +78,8 @@ jobs:
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
 
-      - name: Browser end-to-end checks
+      - name: Browser end-to-end checks (production headers, zero CSP violations)
         run: npm run e2e
+
+      - name: Accessibility checks (axe, every screen, zero CSP violations)
+        run: npm run a11y

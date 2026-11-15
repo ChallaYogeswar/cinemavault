@@ -1,6 +1,6 @@
 // Probes a deployed CinemaVault Next URL and says WHICH /api/tmdb implementation is answering.
 //
-//   npm run check:deployment -- https://my-preview.vercel.app [--token <access token>]
+//   npm run check:deployment -- https://my-preview.vercel.app [--token <access token>] [--bypass <secret>]
 //
 // Why: this repository holds two proxies. `next/api/tmdb.ts` (this app, checks sign-in against the
 // deployment's own Supabase project) and the older root `api/tmdb.js` (hard-codes the PRODUCTION
@@ -15,10 +15,15 @@ const MARKER = 'x-cinemavault-proxy';
 const checkOf = (name, ok, detail = '') => ({ name, ok, detail });
 
 /** `fetchImpl` is injectable so the logic can be tested without a network. */
-export async function probe(base, { token, fetchImpl = fetch } = {}) {
+export async function probe(base, { token, bypass, fetchImpl = fetch } = {}) {
   const root = base.replace(/\/+$/, '');
   const call = async (query, authorized) => {
-    const headers = authorized && token ? { Authorization: `Bearer ${token}` } : {};
+    // `bypass` is the project's "Protection Bypass for Automation" secret: without it a preview
+    // behind Vercel Authentication answers with a login page before the function is reached.
+    const headers = {
+      ...(authorized && token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(bypass ? { 'x-vercel-protection-bypass': bypass } : {}),
+    };
     try {
       const reply = await fetchImpl(`${root}/api/tmdb?${query}`, { headers });
       return { status: reply.status, marker: reply.headers.get(MARKER) };
@@ -90,14 +95,18 @@ async function main() {
   const args = process.argv.slice(2);
   const tokenAt = args.indexOf('--token');
   const token = tokenAt === -1 ? undefined : args[tokenAt + 1];
-  const base = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--token');
+  const bypassAt = args.indexOf('--bypass');
+  const bypass = bypassAt === -1 ? undefined : args[bypassAt + 1];
+  const base = args.find(
+    (a, i) => !a.startsWith('--') && args[i - 1] !== '--token' && args[i - 1] !== '--bypass',
+  );
   if (!base || !/^https?:\/\//.test(base)) {
     console.error(
-      'Usage: npm run check:deployment -- https://your-deployment.vercel.app [--token <access token>]',
+      'Usage: npm run check:deployment -- https://your-deployment.vercel.app [--token <access token>] [--bypass <automation bypass secret>]',
     );
     process.exit(2);
   }
-  const checks = await probe(base, { token });
+  const checks = await probe(base, { token, bypass });
   for (const c of checks)
     console.log(
       `${c.ok ? 'PASS' : 'FAIL'}  ${c.name}${c.ok || !c.detail ? '' : `\n      ${c.detail}`}`,

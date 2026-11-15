@@ -41,6 +41,8 @@ function App({ backend }: { readonly backend: Ready }) {
         libraryCache: device.library,
         history: device.history,
         snoozes: device.snoozes,
+        outbox: device.outbox,
+        roles: device.roles,
         metadata: createMetadataService({
           client: createTmdbClient({
             getToken: async () =>
@@ -69,6 +71,8 @@ function App({ backend }: { readonly backend: Ready }) {
       libraryCache: null, // sample data is not private and has nothing to keep on the device
       history: null,
       snoozes: null,
+      outbox: null,
+      roles: null,
       metadata: null,
     };
     return { runtime, store: createActiveUserStore(MOCK_OWNER_ID), service: null, preview };

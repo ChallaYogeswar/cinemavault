@@ -33,7 +33,13 @@ export interface AppError {
 }
 
 export type Result<T, E extends AppError = AppError> =
-  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+  /**
+   * `queued` is set only when the change could not reach the server and was kept on this device to
+   * be sent later (offline editing). `value` is then what the person will see meanwhile, not what
+   * the server has confirmed.
+   */
+  | { readonly ok: true; readonly value: T; readonly queued?: true }
+  | { readonly ok: false; readonly error: E };
 
 export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
 

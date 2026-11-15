@@ -17,6 +17,9 @@ export const moviesKey = (userId: string) => privateKey(userId, 'movies');
 /** Where the library on screen came from (server or the saved copy). Lives and dies with `moviesKey`. */
 export const librarySourceKey = (userId: string) => privateKey(userId, 'library-source');
 
+/** Changes made offline that are still waiting to be sent (device data; see features/sync). */
+export const outboxKey = (userId: string) => privateKey(userId, 'outbox');
+
 /** True for a private query that belongs to someone other than `userId`. */
 export const belongsToAnotherUser = (queryKey: readonly unknown[], userId: string): boolean =>
   queryKey[0] === PRIVATE_ROOT && queryKey[1] !== userId;

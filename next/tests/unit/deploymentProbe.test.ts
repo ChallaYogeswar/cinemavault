@@ -10,7 +10,7 @@ interface Check {
 }
 type Probe = (
   base: string,
-  options: { token?: string; fetchImpl: typeof fetch },
+  options: { token?: string; bypass?: string; fetchImpl: typeof fetch },
 ) => Promise<Check[]>;
 const run = probe as Probe;
 
@@ -43,6 +43,21 @@ const ENV: ProxyEnv = {
 };
 
 describe('check:deployment', () => {
+  it('sends the automation-bypass header on every call, and only when given', async () => {
+    const seen: (string | null)[] = [];
+    const spy: typeof fetch = (input, init) => {
+      seen.push(new Headers(init?.headers).get('x-vercel-protection-bypass'));
+      return deployment(ENV)(input, init);
+    };
+    await run('https://preview.example', { token: 'jwt', bypass: 'secret', fetchImpl: spy });
+    expect(seen.length).toBeGreaterThan(3);
+    expect(seen.every((value) => value === 'secret')).toBe(true);
+
+    seen.length = 0;
+    await run('https://preview.example', { token: 'jwt', fetchImpl: spy });
+    expect(seen.every((value) => value === null)).toBe(true);
+  });
+
   it('recognises the new proxy and passes every signed-out and signed-in check', async () => {
     const checks = await run('https://preview.example', {
       token: 'jwt',

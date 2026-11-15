@@ -167,3 +167,188 @@ export async function rehearse({ source, dest, apply, batchSize = 200, log = () 
     identical: diff.identical && digestRows(copy) === report.sourceDigest,
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// The data-integrity GATE: the checks that were run by hand against production (docs/migration-
+// plan.md, "Baseline measured on production"), as code, so they can be re-run before and after
+// every migration, rehearsal and cutover with one command. Pure: rows in, verdict out.
+// ---------------------------------------------------------------------------------------------
+
+/** MIRRORS src/domain/identity.ts (`comparableTitle`); tests/unit/dataGate.test.ts pins the parity. */
+export function comparableTitle(normalized) {
+  return normalized
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+// MIRRORS the application's `normalizeTitle`; used only to COUNT rows whose stored value differs (F9).
+const appNormalize = (title) =>
+  (title ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/\(series\)|\(show\)|\(tv\)/gi, '')
+    .replace(/\s+season\s+\d+$/i, '')
+    .trim();
+
+const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u;
+const timeOf = (value) => (typeof value === 'string' ? Date.parse(value) : Number.NaN);
+
+/**
+ * `fail` checks must be zero before and after a cutover: they are things the application cannot
+ * represent or that break the "one title, one row" promise. `note` checks are known, documented
+ * data conditions (F7, F9, F10 in docs/migration-plan.md): they are reported with their count so
+ * a change since the last baseline is visible, but they never fail the gate by themselves.
+ */
+export function gateRows(rows) {
+  const live = rows.filter((row) => row.deleted_at === null);
+  const bad = (name, kind, test, rowsToCheck = rows) => {
+    const hits = rowsToCheck.filter(test);
+    return {
+      name,
+      kind,
+      count: hits.length,
+      pass: kind === 'note' || hits.length === 0,
+      sample: hits.slice(0, 5).map((row) => row.id),
+    };
+  };
+
+  const groups = new Map();
+  for (const row of live) {
+    const key = `${row.media_type}|${comparableTitle(String(row.normalized_title ?? ''))}|${row.year ?? ''}`;
+    groups.set(key, [...(groups.get(key) ?? []), row.id]);
+  }
+  const duplicateGroups = [...groups.values()].filter((ids) => ids.length > 1);
+  const idCounts = new Map();
+  for (const row of rows) idCounts.set(row.id, (idCounts.get(row.id) ?? 0) + 1);
+  const repeatedIds = [...idCounts.entries()].filter(([, n]) => n > 1).map(([id]) => id);
+
+  const checks = [
+    {
+      name: 'every id appears once',
+      kind: 'fail',
+      count: repeatedIds.length,
+      pass: repeatedIds.length === 0,
+      sample: repeatedIds.slice(0, 5),
+    },
+    {
+      name: 'duplicate live titles (same type, comparable title and year)',
+      kind: 'fail',
+      count: duplicateGroups.length,
+      pass: duplicateGroups.length === 0,
+      sample: duplicateGroups.slice(0, 5).map((ids) => ids.join(' + ')),
+    },
+    bad(
+      'every row has an owner',
+      'fail',
+      (r) => typeof r.owner_id !== 'string' || r.owner_id === '',
+    ),
+    bad(
+      'titles are present, at most 200 characters, with no control characters',
+      'fail',
+      (r) =>
+        typeof r.title !== 'string' ||
+        r.title.trim() === '' ||
+        r.title.length > 200 ||
+        CONTROL.test(r.title),
+    ),
+    bad(
+      'media type is movie or tv',
+      'fail',
+      (r) => r.media_type !== 'movie' && r.media_type !== 'tv',
+    ),
+    bad(
+      'year is empty or between 1888 and 2100',
+      'fail',
+      (r) => r.year !== null && !(Number.isInteger(r.year) && r.year >= 1888 && r.year <= 2100),
+    ),
+    bad(
+      'rating is empty or between 0 and 5',
+      'fail',
+      (r) => r.user_rating !== null && !(Number(r.user_rating) >= 0 && Number(r.user_rating) <= 5),
+    ),
+    bad(
+      'runtime is empty or a whole number of minutes from 0 to 10000',
+      'fail',
+      (r) =>
+        r.runtime_minutes !== null &&
+        !(
+          Number.isInteger(r.runtime_minutes) &&
+          r.runtime_minutes >= 0 &&
+          r.runtime_minutes <= 10_000
+        ),
+    ),
+    bad(
+      '"not watched" rows have no watched date',
+      'fail',
+      (r) => r.watched === false && r.watched_on !== null,
+    ),
+    bad(
+      'notes are at most 5,000 characters',
+      'fail',
+      (r) => String(r.technical_notes ?? '').length > 5000,
+    ),
+    bad(
+      'timestamps parse, and a row is never updated before it was created',
+      'fail',
+      (r) =>
+        Number.isNaN(timeOf(r.created_at)) ||
+        Number.isNaN(timeOf(r.updated_at)) ||
+        timeOf(r.updated_at) < timeOf(r.created_at),
+    ),
+    bad(
+      'a deleted row was deleted after it was created',
+      'fail',
+      (r) =>
+        r.deleted_at !== null &&
+        (Number.isNaN(timeOf(r.deleted_at)) || timeOf(r.deleted_at) < timeOf(r.created_at)),
+    ),
+    bad(
+      'stored normalized title is trimmed and lower-case',
+      'fail',
+      (r) =>
+        typeof r.normalized_title !== 'string' ||
+        r.normalized_title !== r.normalized_title.trim().toLowerCase(),
+    ),
+    // Known, documented conditions: reported, not failed.
+    bad('F7: shot link is not an http(s) address', 'note', (r) => {
+      const link = String(r.shot_link ?? '').trim();
+      return link !== '' && !/^https?:\/\//i.test(link);
+    }),
+    bad(
+      'F9: stored normalized title differs from the application’s spelling',
+      'note',
+      (r) => r.normalized_title !== appNormalize(r.title),
+      live,
+    ),
+    bad('F10: title looks like pasted search-result text', 'note', (r) =>
+      /\b(1[89]|20)\d\d\s*[·‧•,|]\s|\buser noted\b/i.test(String(r.title ?? '')),
+    ),
+  ];
+
+  return {
+    rows: rows.length,
+    live: live.length,
+    tombstones: rows.length - live.length,
+    checks,
+    pass: checks.every((c) => c.pass),
+  };
+}
+
+/**
+ * Compares a library with an earlier backup's expectations. Used right after a cutover to prove
+ * that nothing changed under the migration: same count, same digest.
+ */
+export function compareWithExpectation(rows, { digest, count } = {}) {
+  const problems = [];
+  if (count !== undefined && rows.length !== count) {
+    problems.push(`expected ${String(count)} rows but found ${String(rows.length)}`);
+  }
+  if (digest !== undefined && digestRows(rows) !== digest) {
+    problems.push('the library’s digest differs from the expected one: some value changed');
+  }
+  return { pass: problems.length === 0, problems };
+}

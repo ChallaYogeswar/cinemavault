@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
-import { createDexieLibraryCache } from '@/data/local/dexieLibraryCache';
+import { createDexieDeviceStore } from '@/data/local/dexieLibraryCache';
+import { flushOutbox } from '@/data/sync/flushOutbox';
 import { loadLibrary } from '@/data/local/loadLibrary';
 import type { MovieRepository } from '@/data/repositories/movieRepository';
 import { createSupabaseMovieRepository } from '@/data/supabase/supabaseMovieRepository';
@@ -15,7 +16,8 @@ import { createPgliteClient } from './pgliteSupabase';
  */
 export function createDevice(db: PGlite, userId: string, role: Role) {
   const factory = new IDBFactory();
-  const cache = createDexieLibraryCache({ indexedDB: factory, IDBKeyRange });
+  const store = createDexieDeviceStore({ indexedDB: factory, IDBKeyRange });
+  const cache = store.library;
   const pg = createPgliteClient(db, { getUser: () => userId });
   const net = { down: false };
   const base = createSupabaseMovieRepository({ client: pg.client, userId, getRole: () => role });
@@ -27,7 +29,8 @@ export function createDevice(db: PGlite, userId: string, role: Role) {
   const repository: MovieRepository = {
     list: () => gate(() => base.list()),
     get: (id) => gate(() => base.get(id)),
-    create: (input) => gate(() => base.create(input)),
+    create: (input, options) => gate(() => base.create(input, options)),
+    createMany: (inputs) => gate(() => base.createMany(inputs)),
     update: (id, input, at) => gate(() => base.update(id, input, at)),
     remove: (id, at) => gate(() => base.remove(id, at)),
   };
@@ -35,9 +38,12 @@ export function createDevice(db: PGlite, userId: string, role: Role) {
   return {
     userId,
     cache,
+    outbox: store.outbox,
     factory,
     repository,
     net,
+    /** What the app does when it sends the changes made offline. */
+    sync: () => flushOutbox({ repository, store: store.outbox, userId, isCurrent: () => true }),
     /** What the app does on this device when the library is opened. */
     open: () => loadLibrary({ repository, cache, userId, isCurrent: () => true }),
     /** The saved copy, once the fire-and-forget save has landed. */

@@ -125,3 +125,36 @@
 - [ ] **Manual:** the same 5,000-title run on a real mid-range phone (the script throttles a desktop CPU, which is an approximation)
 - [ ] **Manual:** production deployment rehearsal on a Vercel preview of `next/` (Root Directory `next`): follow `docs/deployment-rehearsal.md` (check:deployment, sign in, PWA install, flight mode, rollback)
 - [ ] **Deferred on purpose:** Android packaging, until the web release has passed the manual items above
+
+## M6 gates (offline editing, transfer, cutover, hardening)
+
+**Offline editing** — two real devices, owner account (details in `m6-test-plan.md`)
+
+- [ ] Airplane mode: add, edit and delete titles; each shows "Not synced"; reload while offline keeps them
+- [ ] Reconnect: everything syncs by itself, exactly once; badges and banner clear; no duplicate titles
+- [ ] Edit the same title on device A (offline) and device B (online): A's change becomes "Needs review", nothing is overwritten; both choices work
+- [ ] Delete on A while B edits the title: wording is correct and nothing is lost silently
+- [ ] Signing out with unsent changes asks first; "Stay signed in" keeps them
+- [ ] A viewer account never gets add/edit/delete, online or offline
+- [ ] **Decision (open):** a *server-side* sign-out (revoked session) discards unsent offline changes. Accept, or add "export unsent changes before wiping"?
+
+**Export / import**
+
+- [ ] JSON and CSV export open correctly; a title starting with `=` is shown as text in a spreadsheet
+- [ ] Import of the JSON export into an empty dev project reproduces the library (counts, ratings, dates)
+- [ ] Import of a hostile file (huge, malformed, formulas, duplicates) never changes existing titles
+
+**Cutover** — only after everything above (`cutover-runbook.md`)
+
+- [ ] All 12 go/no-go rows true; decisions F1, F2, F6, F9, F10 written down
+- [ ] `data-gate.mjs` passes on dev after a full rehearsal, and on production (read-only) the day before
+- [ ] Backup file stored outside the repository; Supabase backup/PITR time written down
+- [ ] Rollback rehearsed: public address moved back to the previous deployment and the app signs in
+
+**Hardening** (`hardening.md`)
+
+- [ ] On the preview and on production: no "Refused to …" message in the console on any screen
+- [ ] `curl -sI <url>` shows the Content-Security-Policy and the other security headers
+- [ ] Vercel Firewall rate-limit rule added for `/api/tmdb` (the in-code limit is per instance only)
+- [ ] `npm audit` reviewed; lockfile installs only
+- [ ] Decision: choose an error-reporting service, or accept console-only for now

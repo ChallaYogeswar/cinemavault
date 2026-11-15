@@ -26,6 +26,7 @@ const repo = (list: () => Promise<Result<readonly Movie[]>>): MovieRepository =>
   list,
   get: () => Promise.reject(new Error('unused')),
   create: () => Promise.reject(new Error('unused')),
+  createMany: () => Promise.reject(new Error('unused')),
   update: () => Promise.reject(new Error('unused')),
   remove: () => Promise.reject(new Error('unused')),
 });

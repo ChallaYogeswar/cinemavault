@@ -38,7 +38,12 @@ export function AddMovieDialog() {
     if (isSessionChanged(result)) return; // belongs to a previous account: show/do nothing
     if (result.ok) {
       dirty.current = false;
-      toast.show('success', `Added “${result.value.title}”.`);
+      toast.show(
+        'success',
+        result.queued
+          ? `“${result.value.title}” is saved on this device and will sync when you’re back online.`
+          : `Added “${result.value.title}”.`,
+      );
       close();
     } else {
       setError(result.error);

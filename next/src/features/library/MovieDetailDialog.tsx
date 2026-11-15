@@ -60,7 +60,12 @@ function Detail({ movie }: { readonly movie: Movie }) {
     const result = await remove.mutateAsync({ id: movie.id, expectedUpdatedAt: movie.updatedAt });
     if (isSessionChanged(result)) return;
     if (result.ok) {
-      toast.show('success', `Deleted “${movie.title}”.`);
+      toast.show(
+        'success',
+        result.queued
+          ? `“${movie.title}” will be deleted when you’re back online.`
+          : `Deleted “${movie.title}”.`,
+      );
       close();
     } else {
       toast.show('error', result.error.message);

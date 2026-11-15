@@ -49,8 +49,9 @@ CinemaVault is a web application for managing a personal collection of movies an
 ### Offline-friendly experience
 
 - The newer application stores a validated copy of the signed-in user's library locally using IndexedDB.
-- Previously loaded library data can be viewed when the network is unavailable.
-- Creating, editing, and deleting entries require a connection.
+- Previously loaded library data can be viewed and edited when the network is unavailable; queued changes sync when the connection returns.
+- Conflicting or refused changes are kept for review rather than silently overwriting server data.
+- Settings supports checksummed JSON backups, spreadsheet-safe CSV export, and previewed, add-only imports.
 - The installable PWA shell can load offline after it has been cached.
 
 ## Technology
@@ -230,9 +231,9 @@ See [`supabase/README.md`](supabase/README.md), [`supabase/AUTH_SETUP.md`](supab
 
 ## Offline and PWA behaviour
 
-In the newer application, the last successfully loaded library is stored locally per account. When offline, the application can display that saved library with an offline indicator. Library mutations remain online-only.
+In the newer application, the last successfully loaded library and queued offline changes are stored locally per account. When offline, the application can display the saved library, accept additions, edits, and deletions, and show which changes are waiting to sync. When the connection returns, changes are sent with version checks; conflicts and server refusals remain visible for review.
 
-The production build includes service-worker support for caching the application shell. This does not mean all remote data or every feature is available offline. Signing out or changing accounts clears the previous account's private cached data.
+The production build includes service-worker support for caching the application shell. This does not mean all remote data or every feature is available offline. Signing out or changing accounts clears the previous account's private cached data after handling any unsent changes.
 
 To build and preview the production version locally:
 
@@ -247,6 +248,7 @@ Install Chromium for the browser test suite if it is not already available:
 ```bash
 npx playwright install chromium
 npm run e2e
+npm run a11y
 ```
 
 ## Testing and quality checks
@@ -261,7 +263,10 @@ Run these commands from `next/`:
 | `npm test`             | Unit, component, integration, database-contract and security tests |
 | `npm run build`        | Production build                                                   |
 | `npm run check:bundle` | Checks the built output for prohibited credentials                 |
-| `npm run e2e`          | Browser-level offline/PWA tests                                    |
+| `npm run check:headers`| Verifies Vercel security headers match the CSP policy               |
+| `npm run e2e`          | Browser-level offline/PWA and CSP tests                            |
+| `npm run a11y`         | Browser accessibility and CSP checks                               |
+| `npm run perf`         | Browser performance checks                                          |
 | `npm run check`        | Runs typecheck, lint, formatting and tests                         |
 
 Before a release, also follow the manual checks in [`docs/release-checklist.md`](docs/release-checklist.md). Automated tests do not replace real-device, real-account, preview-environment, or production-readiness checks.
@@ -296,6 +301,9 @@ Do not change the existing production project's root directory as a shortcut: it
 | [`docs/migration-plan.md`](docs/migration-plan.md)         | Database and library migration strategy                           |
 | [`docs/migration-baseline.md`](docs/migration-baseline.md) | Canonical migration history and baseline                          |
 | [`docs/release-checklist.md`](docs/release-checklist.md)   | Required release and cutover gates                                |
+| [`docs/cutover-runbook.md`](docs/cutover-runbook.md)       | Gated cutover and rollback procedure                              |
+| [`docs/hardening.md`](docs/hardening.md)                   | CSP, security headers, error reporting and limits                 |
+| [`docs/m6-test-plan.md`](docs/m6-test-plan.md)             | Manual offline-sync, import/export and preview test plan           |
 | [`supabase/README.md`](supabase/README.md)                 | Supabase setup and database guidance                              |
 | [`supabase/AUTH_SETUP.md`](supabase/AUTH_SETUP.md)         | Authentication and redirect configuration                         |
 

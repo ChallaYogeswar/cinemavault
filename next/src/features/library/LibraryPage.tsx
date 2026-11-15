@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState, ErrorState, LoadingGrid } from '@/components/ui/states';
 import { applyLibraryQuery, genreCounts } from '@/domain/library';
 import type { Movie } from '@/domain/movie';
+import { outboxStatus } from '@/domain/outbox';
+import { useOutboxEntries } from '@/features/sync/useOutbox';
 import { LibraryToolbar } from './LibraryToolbar';
 import { MovieCard } from './MovieCard';
 import { RepositoryError } from '@/data/repositories/repositoryError';
@@ -16,13 +18,23 @@ export const PAGE_SIZE = 48;
 
 function MovieGrid({ movies }: { readonly movies: readonly Movie[] }) {
   const [visible, setVisible] = useState(PAGE_SIZE);
+  const entries = useOutboxEntries();
+  const status = useMemo(() => outboxStatus(entries), [entries]);
   const shown = movies.slice(0, visible);
   const remaining = movies.length - shown.length;
   return (
     <>
       <div className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 sm:gap-x-4 md:grid-cols-4 lg:grid-cols-5">
         {shown.map((movie) => (
-          <MovieCard key={movie.id} movie={movie} />
+          <MovieCard
+            key={movie.id}
+            movie={movie}
+            {...(status.attention.has(movie.id)
+              ? { sync: 'attention' as const }
+              : status.pending.has(movie.id)
+                ? { sync: 'pending' as const }
+                : {})}
+          />
         ))}
       </div>
       {remaining > 0 ? (

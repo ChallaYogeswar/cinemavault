@@ -22,12 +22,12 @@ export function useMovieMetadata(movie: Target): MovieMetadata | null {
   const query = useQuery({
     queryKey: privateKey(userId, 'metadata', key),
     queryFn: metadata
-      ? async () => {
-          const found = await metadata.lookup(userId, {
-            title: movie.title,
-            year: movie.year,
-            mediaType: movie.mediaType,
-          });
+      ? async ({ signal }) => {
+          const found = await metadata.lookup(
+            userId,
+            { title: movie.title, year: movie.year, mediaType: movie.mediaType },
+            signal,
+          );
           if (!isCurrent()) throw new Error('session changed');
           // Failing (rather than returning "nothing") keeps a temporary problem from being remembered.
           if (found.kind === 'unavailable') throw new Error(found.failure);

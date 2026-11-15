@@ -37,3 +37,22 @@ export function rehearse(options: {
   identical?: boolean;
   diff?: ReturnType<typeof diffRows>;
 }>;
+export function comparableTitle(normalized: string): string;
+export interface GateCheck {
+  name: string;
+  kind: 'fail' | 'note';
+  count: number;
+  pass: boolean;
+  sample: string[];
+}
+export function gateRows(rows: readonly Row[]): {
+  rows: number;
+  live: number;
+  tombstones: number;
+  checks: GateCheck[];
+  pass: boolean;
+};
+export function compareWithExpectation(
+  rows: readonly Row[],
+  expectation?: { digest?: string; count?: number },
+): { pass: boolean; problems: string[] };

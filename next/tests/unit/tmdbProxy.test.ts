@@ -4,6 +4,7 @@ import {
   PROXY_MARKER_HEADER,
   SIGN_IN_MEMORY_MS,
   buildUpstream,
+  createRateLimiter,
   createSignInMemory,
   handleTmdbRequest,
   type ProxyEnv,
@@ -102,20 +103,6 @@ describe('who may call the proxy', () => {
     });
     expect(r.status).toBe(200);
     expect(f.authCalls()[0]?.url).toBe('https://vite.supabase.co/auth/v1/user');
-  });
-
-  it('accepts the previous TMDB server environment variable name', async () => {
-    const f = fakeFetch();
-    const r = await handleTmdbRequest(req(), {
-      env: {
-        TMDB: KEY,
-        SUPABASE_URL: 'https://dev-project.supabase.co',
-        SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_dev',
-      },
-      fetch: f.fetch,
-    });
-    expect(r.status).toBe(200);
-    expect(upstreamOf(f.calls)?.url).toContain(`api_key=${KEY}`);
   });
 
   it('says 503 — not 401 — when the auth server cannot be reached or is unconfigured', async () => {
@@ -410,5 +397,98 @@ describe('review fixes: one path, bytes not characters, a marker on every answer
     ];
     expect(answers.map((a) => a.status)).toEqual([200, 401, 405, 400, 501]);
     for (const a of answers) expect(a.headers[PROXY_MARKER_HEADER]).toBe(PROXY_MARKER);
+  });
+});
+
+describe('rate limiting', () => {
+  const clock = (start = 1_000_000) => {
+    let t = start;
+    return { now: () => t, advance: (ms: number) => (t += ms) };
+  };
+
+  it('createRateLimiter: allows up to the limit per key, then says how long to wait', () => {
+    const limiter = createRateLimiter(3, 60_000);
+    expect([1, 2, 3].map(() => limiter.take('a', 0).allowed)).toEqual([true, true, true]);
+    const refused = limiter.take('a', 10_000);
+    expect(refused).toEqual({ allowed: false, retryAfterSeconds: 50 });
+    expect(limiter.take('b', 10_000).allowed).toBe(true); // another key is unaffected
+    expect(limiter.take('a', 60_000).allowed).toBe(true); // a new window starts
+  });
+
+  it('createRateLimiter: a flood of distinct keys cannot grow it past its cap', () => {
+    const limiter = createRateLimiter(1, 60_000, 5);
+    for (let i = 0; i < 50; i += 1) expect(limiter.take(`k${String(i)}`, i).allowed).toBe(true);
+    // The newest keys are still remembered; the oldest were dropped.
+    expect(limiter.take('k49', 100).allowed).toBe(false);
+    expect(limiter.take('k0', 100).allowed).toBe(true);
+  });
+
+  it('refuses a signed-in user over the limit with 429 + Retry-After, and never calls TMDB', async () => {
+    const f = fakeFetch();
+    const time = clock();
+    const deps = {
+      env: ENV,
+      fetch: f.fetch,
+      now: time.now,
+      signInMemory: createSignInMemory(),
+      userLimiter: createRateLimiter(2),
+    };
+    expect((await handleTmdbRequest(req(), deps)).status).toBe(200);
+    expect((await handleTmdbRequest(req(), deps)).status).toBe(200);
+    const tmdbCallsBefore = f.calls.filter((c) => c.url.includes('themoviedb')).length;
+    const third = await handleTmdbRequest(req(), deps);
+    expect(third.status).toBe(429);
+    expect(third.headers['Retry-After']).toBe('60');
+    expect(JSON.parse(third.body)).toMatchObject({ code: 'rate_limited' });
+    expect(f.calls.filter((c) => c.url.includes('themoviedb')).length).toBe(tmdbCallsBefore);
+    time.advance(61_000);
+    expect((await handleTmdbRequest(req(), deps)).status).toBe(200);
+  });
+
+  it('one user’s budget is not another’s', async () => {
+    const f = fakeFetch();
+    const deps = { env: ENV, fetch: f.fetch, userLimiter: createRateLimiter(1) };
+    expect((await handleTmdbRequest(req({ authorization: 'Bearer one' }), deps)).status).toBe(200);
+    expect((await handleTmdbRequest(req({ authorization: 'Bearer one' }), deps)).status).toBe(429);
+    expect((await handleTmdbRequest(req({ authorization: 'Bearer two' }), deps)).status).toBe(200);
+  });
+
+  it('a rejected token never spends a real user’s budget, but the address limit still stops a flood of them', async () => {
+    const f = fakeFetch({ auth: 401 });
+    const deps = {
+      env: ENV,
+      fetch: f.fetch,
+      clientLimiter: createRateLimiter(3),
+      userLimiter: createRateLimiter(1),
+    };
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const r = await handleTmdbRequest(
+        req({ authorization: `Bearer junk-${String(i)}`, clientIp: '203.0.113.9' }),
+        deps,
+      );
+      statuses.push(r.status);
+    }
+    expect(statuses).toEqual([401, 401, 401, 429, 429]);
+    // The 4th and 5th never reached the auth server.
+    expect(f.authCalls()).toHaveLength(3);
+  });
+
+  it('does not limit by address when the host reports none, and is off when no limiter is given', async () => {
+    const f = fakeFetch();
+    const deps = { env: ENV, fetch: f.fetch, clientLimiter: createRateLimiter(1) };
+    for (let i = 0; i < 4; i += 1) expect((await handleTmdbRequest(req(), deps)).status).toBe(200);
+    const bare = { env: ENV, fetch: f.fetch };
+    for (let i = 0; i < 4; i += 1) {
+      expect((await handleTmdbRequest(req({ clientIp: '198.51.100.1' }), bare)).status).toBe(200);
+    }
+  });
+
+  it('answers 429 from the limiter with the same marker header as every other answer', async () => {
+    const f = fakeFetch();
+    const deps = { env: ENV, fetch: f.fetch, userLimiter: createRateLimiter(0) };
+    const r = await handleTmdbRequest(req(), deps);
+    expect(r.status).toBe(429);
+    expect(r.headers[PROXY_MARKER_HEADER]).toBe(PROXY_MARKER);
   });
 });

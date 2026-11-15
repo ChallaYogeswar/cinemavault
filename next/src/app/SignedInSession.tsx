@@ -24,29 +24,44 @@ function ProfileSession({
   readonly children: ReactNode;
 }) {
   const store = useActiveUser();
-  const { profiles } = useRuntime();
+  const { profiles, roles } = useRuntime();
   const profile = useQuery({
     queryKey: privateKey(user.id, 'profile'),
-    queryFn: async (): Promise<unknown> => {
+    queryFn: async (): Promise<{ readonly profile: unknown; readonly fromDevice: boolean }> => {
       if (!profiles) throw new Error('No profile source is configured');
       const result = await profiles.load(user.id);
-      if (!result.ok) throw new RepositoryError(result.error);
-      return result.value;
+      if (result.ok) {
+        // Remember what the server confirmed, so an owner who later opens the app offline can keep working.
+        if (roles) void roles.put(user.id, resolveRole(result.value), new Date());
+        return { profile: result.value, fromDevice: false };
+      }
+      // ONLY "could not reach the server" may fall back to what this device last confirmed. A
+      // refusal, a bad answer or any other failure stays fail-closed (viewer). The server checks
+      // every change again when it is sent, so this is a convenience, never an authorization.
+      if (result.error.code === 'network' && roles) {
+        const stored = await roles.get(user.id);
+        if (stored) return { profile: { role: stored.role }, fromDevice: true };
+      }
+      throw new RepositoryError(result.error);
     },
     // Role refresh strategy (see docs/architecture.md): the role is read again on every sign-in or
     // reload, when the tab regains focus once this is a minute old, when a write is refused as
     // forbidden, and on demand from Settings. A failed re-read falls back to viewer.
-    staleTime: 60_000,
+    // An answer that came from this device (offline) is checked with the server as soon as possible.
+    staleTime: (query) => (query.state.data?.fromDevice ? 0 : 60_000),
+    refetchOnReconnect: 'always',
   });
 
   if (profile.isPending) return <FullPageStatus label="Checking your permissions…" />;
 
-  const verified = profile.isSuccess;
+  const fromDevice = profile.isSuccess && profile.data.fromDevice;
+  const verified = profile.isSuccess && !fromDevice;
   return (
     <SessionProvider
       store={store}
-      role={verified ? resolveRole(profile.data) : 'viewer'}
+      role={profile.isSuccess ? resolveRole(profile.data.profile) : 'viewer'}
       roleVerified={verified}
+      roleFromDevice={fromDevice}
       retryRole={() => {
         void profile.refetch();
       }}

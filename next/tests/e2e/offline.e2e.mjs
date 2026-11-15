@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createFakeSupabase, movieRow } from './fakeSupabase.mjs';
+import { e2eHeaders, provePolicyIsEnforced, watchCsp } from './cspMonitor.mjs';
 import { createStaticServer } from './staticServer.mjs';
 
 import { chromium } from 'playwright';
@@ -38,8 +39,7 @@ const within = async (promise, ms, label) => {
 };
 
 function build(outDir, supabaseUrl, appEnv) {
-  const viteCli = resolve(appRoot, 'node_modules', 'vite', 'bin', 'vite.js');
-  execFileSync(process.execPath, [viteCli, 'build', '--outDir', outDir, '--emptyOutDir'], {
+  execFileSync('npx', ['vite', 'build', '--outDir', outDir, '--emptyOutDir'], {
     cwd: appRoot,
     stdio: 'pipe',
     env: {
@@ -105,7 +105,7 @@ const tmdbApi = (req, res, url) => {
       : [],
   });
 };
-const web = createStaticServer(join(work, 'v1'), tmdbApi);
+const web = createStaticServer(join(work, 'v1'), tmdbApi, { headers: e2eHeaders(supabaseUrl) });
 const webPort = await web.listen();
 const base = `http://127.0.0.1:${webPort}`;
 
@@ -113,6 +113,7 @@ const browser = await chromium.launch(
   process.env.E2E_CHROMIUM_PATH ? { executablePath: process.env.E2E_CHROMIUM_PATH } : {},
 );
 const context = await browser.newContext();
+const cspViolations = await watchCsp(context);
 // 1x1 PNG standing in for image.tmdb.org (the sandbox has no route to the real host).
 const PIXEL = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
@@ -409,11 +410,47 @@ try {
   await waitText('showing your library as saved');
   check('offline reload opens the app (service worker) and shows the saved library', true);
   check(
-    'offline: banner says it is a saved copy and that writes need a connection',
-    await has('need a connection'),
+    'offline: banner says it is a saved copy and that changes are kept on this device',
+    await has('changes are kept on this device'),
   );
   const addVisible = await page.getByRole('link', { name: /add/i }).count();
-  check('offline: add entry point is hidden', addVisible === 0, `found ${addVisible}`);
+  check('offline: the add entry point is available (owner, offline editing)', addVisible > 0);
+
+  // --- 2b. Offline editing: add a title with no connection, keep it across a reload, sync it
+  //         exactly once on reconnect ------------------------------------------------------------
+  await page.getByRole('link', { name: /add/i }).first().click();
+  await page.getByRole('dialog').waitFor();
+  await page.locator('#title').fill('Offline Added Film');
+  await page.locator('#year').fill('2019');
+  await page.getByRole('button', { name: 'Add to library' }).click();
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  await waitText('Offline Added Film');
+  await waitText('NOT SYNCED'); // the badge is upper-cased by CSS, and innerText follows it;
+  check('offline add: the title shows at once, marked "Not synced"', true);
+  check('offline add: a banner says it is waiting to sync', /waiting to sync/.test(await text()));
+  check(
+    'offline add: nothing reached the server',
+    !alice.movies.some((m) => m.title === 'Offline Added Film'),
+  );
+  await page.reload();
+  await waitText('Offline Added Film');
+  await waitText('NOT SYNCED'); // the badge is upper-cased by CSS, and innerText follows it;
+  check('offline add: still there, still unsynced, after reloading the page offline', true);
+
+  await online(); // coming back online syncs by itself: nobody has to press anything
+  await waitGone('NOT SYNCED');
+  const copies = alice.movies.filter((m) => m.title === 'Offline Added Film');
+  check('reconnect: the title is saved on the server exactly once', copies.length === 1);
+  check('reconnect: the waiting banner is gone', !/waiting to sync/.test(await text()));
+  await page.waitForTimeout(1500); // a second pass (timer / visibility) must find nothing to send
+  check(
+    'reconnect: syncing again adds nothing',
+    alice.movies.filter((m) => m.title === 'Offline Added Film').length === 1,
+  );
+  await offline();
+  await page.reload();
+  await waitText('Alice Film One');
+
   await page.goto(`${base}/settings`);
   await waitText('Keep the vault yours');
   check('offline: a deep link to another route also opens', true);
@@ -421,8 +458,10 @@ try {
   await page.getByRole('button', { name: 'Pick another' }).waitFor({ timeout: 15000 });
   check(
     'offline: Discover still suggests from the saved library, and says it is a saved copy',
-    (await page.getByRole('article', { name: 'Suggested title' }).locator('h2').innerText()) ===
-      'Alice Pending' && (await has('showing your library as saved')),
+    // The unwatched titles are "Alice Pending" and the one added offline a moment ago.
+    ['Alice Pending', 'Offline Added Film'].includes(
+      await page.getByRole('article', { name: 'Suggested title' }).locator('h2').innerText(),
+    ) && (await has('showing your library as saved')),
   );
   await page.goto(`${base}/stats`);
   await page.getByRole('heading', { name: 'Your taste, in numbers.' }).waitFor({ timeout: 15000 });
@@ -611,6 +650,19 @@ try {
   // --- 8. No credentials in what we ship --------------------------------------------------
   const sw = await (await fetch(`${base}/sw.js`)).text();
   check('sw.js contains no keys, tokens or emails', !/eyJ|sb_|bob@|alice@|access_token/.test(sw));
+
+  // --- 9. The Content-Security-Policy held for the whole run -------------------------------
+  const probe = await provePolicyIsEnforced(page, cspViolations);
+  check(
+    'the policy is really enforced (an injected inline script is blocked and reported)',
+    probe.blocked && probe.reported,
+    JSON.stringify(probe),
+  );
+  check(
+    'zero Content-Security-Policy violations across sign-in, library, offline, update',
+    cspViolations.length === 0,
+    JSON.stringify(cspViolations.slice(0, 5)),
+  );
 
   check(
     'no uncaught page errors during the run',

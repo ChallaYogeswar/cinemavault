@@ -181,6 +181,18 @@ export function createFakeSupabase() {
           .slice(0, limit);
         return json(200, rows);
       }
+      if (url.pathname === '/rest/v1/movies' && req.method === 'POST') {
+        const user = userFromAuthHeader(req);
+        if (!user) return json(401, { message: 'JWT expired' });
+        // Like the real table: a repeated id is a primary-key violation, never a second copy.
+        if (payload.id && user.movies.some((m) => m.id === payload.id)) {
+          return json(409, { code: '23505', message: 'duplicate key value (movies_pkey)' });
+        }
+        const row = movieRow(user.id, payload.title, payload);
+        user.movies.push(row);
+        const wantsObject = (req.headers.accept ?? '').includes('pgrst.object');
+        return json(201, wantsObject ? row : [row]);
+      }
       json(404, { message: `fake supabase: no route for ${req.method} ${url.pathname}` });
     });
   });

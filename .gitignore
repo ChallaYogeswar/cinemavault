@@ -10,3 +10,19 @@
 .env.*
 !.env.example
 /.vscode/settings.json
+
+# Local database rehearsals can contain complete library backups and reports.
+/rehearsal-output/
+/next/rehearsal-output/
+
+# Local deployment and browser-test output.
+/.vercel/
+/next/.vercel/
+/playwright-report/
+/test-results/
+/next/playwright-report/
+/next/test-results/
+
+# Operating-system files.
+.DS_Store
+Thumbs.db

@@ -185,3 +185,38 @@ describe('database errors become the app’s vocabulary', () => {
     expect(fake.requests.filter((r) => r.op === 'insert')).toHaveLength(0);
   });
 });
+
+describe('createMany: requests and races', () => {
+  const batch = (n: number, prefix = 'Bulk') =>
+    Array.from({ length: n }, (_, i) => ({ ...input, title: `${prefix} ${String(i)}` }));
+
+  it('a view-only account is refused before any request is made', async () => {
+    const { repo, fake } = setup({ role: 'viewer' });
+    fake.requests.length = 0;
+    expect(await repo.createMany(batch(3))).toMatchObject({
+      ok: false,
+      error: { code: 'forbidden' },
+    });
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  it('adds 200 rows with ONE insert and a paged read, not a request per row', async () => {
+    const { repo, fake } = setup({ seedCount: 1_500, rowCap: 1_000 });
+    fake.requests.length = 0;
+    const out = must(await repo.createMany(batch(200)));
+    expect(out.created).toHaveLength(200);
+    expect(fake.requests.filter((r) => r.op === 'insert')).toHaveLength(1);
+    expect(fake.requests.length).toBeLessThanOrEqual(4); // 2 pages of identities + 1 insert
+  });
+
+  it('when another device added one of the rows in the meantime, saves the others and skips that one', async () => {
+    const { repo, fake } = setup({ seedCount: 5 });
+    // skip the identity read (1 request), then refuse the batch insert as a unique violation
+    fake.failNext({ code: '23505', message: 'duplicate key' }, 409, 1);
+    const out = must(await repo.createMany(batch(3)));
+    // the batch was refused as a whole, so every row is settled one at a time and all three fit
+    expect(out.created.map((m) => m.title)).toEqual(['Bulk 0', 'Bulk 1', 'Bulk 2']);
+    expect(out.skipped).toEqual([]);
+    expect(fake.movies().filter((r) => r.title.startsWith('Bulk '))).toHaveLength(3);
+  });
+});

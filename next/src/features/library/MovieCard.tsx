@@ -7,6 +7,8 @@ import { MEDIA_LABEL, formatRating } from './format';
 
 interface Props {
   readonly movie: Movie;
+  /** Set while a change to this title has not reached the server: waiting, or needing a decision. */
+  readonly sync?: 'pending' | 'attention';
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  * screen. (`movie` objects keep their identity until that title actually changes.)
  * The poster comes from TMDB when it is available and is a deterministic placeholder otherwise.
  */
-export const MovieCard = memo(function MovieCard({ movie }: Props) {
+export const MovieCard = memo(function MovieCard({ movie, sync }: Props) {
   const { search } = useLocation();
   const genre = splitGenres(movie.genre)[0];
   // What the badges on the poster say, for people who cannot see them (they are hidden from
@@ -25,6 +27,8 @@ export const MovieCard = memo(function MovieCard({ movie }: Props) {
     movie.mediaType === 'tv' ? 'Series' : null,
     movie.watched ? 'Watched' : 'To watch',
     movie.userRating === null ? null : `rated ${formatRating(movie.userRating)} out of 5`,
+    sync === 'pending' ? 'waiting to sync' : null,
+    sync === 'attention' ? 'sync needs your attention' : null,
   ]
     .filter((part) => part !== null)
     .join(', ');
@@ -46,6 +50,15 @@ export const MovieCard = memo(function MovieCard({ movie }: Props) {
             className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest backdrop-blur"
           >
             TV
+          </span>
+        ) : null}
+
+        {sync ? (
+          <span
+            aria-hidden="true"
+            className={`absolute bottom-9 left-2 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest backdrop-blur ${sync === 'attention' ? 'bg-danger/80' : 'bg-black/65'}`}
+          >
+            {sync === 'attention' ? 'Needs review' : 'Not synced'}
           </span>
         ) : null}
 

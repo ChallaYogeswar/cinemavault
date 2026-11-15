@@ -21,8 +21,6 @@ import { createHash } from 'node:crypto';
 
 export interface ProxyEnv {
   readonly TMDB_API_KEY?: string | undefined;
-  /** Existing Vercel projects may still use the previous variable name. */
-  readonly TMDB?: string | undefined;
   readonly SUPABASE_URL?: string | undefined;
   readonly SUPABASE_PUBLISHABLE_KEY?: string | undefined;
   readonly VITE_SUPABASE_URL?: string | undefined;
@@ -34,6 +32,8 @@ export interface ProxyRequest {
   /** Path and query, as received (for example `/api/tmdb?path=/search/multi&query=x`). */
   readonly url: string;
   readonly authorization: string | undefined;
+  /** The caller's address as the host reports it; absent when unknown (then no per-address limit). */
+  readonly clientIp?: string | undefined;
 }
 
 export interface ProxyResponse {
@@ -48,6 +48,10 @@ export interface ProxyDeps {
   readonly now?: () => number;
   /** Remembers recent sign-in checks so a screenful of posters is not a screenful of auth calls. */
   readonly signInMemory?: SignInMemory;
+  /** Caps requests per address, BEFORE the sign-in check (so garbage tokens cannot fan out to auth). */
+  readonly clientLimiter?: RateLimiter;
+  /** Caps requests per verified sign-in, AFTER the check (so a stranger cannot spend someone's budget). */
+  readonly userLimiter?: RateLimiter;
 }
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
@@ -126,6 +130,66 @@ export function createSignInMemory(): SignInMemory {
     },
   };
 }
+
+export type RateDecision =
+  { readonly allowed: true } | { readonly allowed: false; readonly retryAfterSeconds: number };
+
+export interface RateLimiter {
+  take(key: string, now: number): RateDecision;
+}
+
+export const CLIENT_LIMIT_PER_MINUTE = 120;
+export const USER_LIMIT_PER_MINUTE = 60;
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_KEYS = 2_000;
+
+/**
+ * A fixed-window counter per key, held in this instance's memory.
+ *
+ * HONEST LIMITS: a serverless host may run several instances and restarts them freely, and each has
+ * its own counters. So this bounds what ONE instance will do for one caller (it stops a runaway
+ * loop or a casual abuser from draining the TMDB quota through us); it is not a global guarantee.
+ * A hard, shared limit needs the host's firewall rules or a shared store (see docs/hardening.md).
+ * The table is capped, so a flood of distinct keys cannot grow memory without bound.
+ */
+export function createRateLimiter(
+  limit: number,
+  windowMs: number = RATE_WINDOW_MS,
+  maxKeys: number = RATE_MAX_KEYS,
+): RateLimiter {
+  const windows = new Map<string, { start: number; count: number }>();
+  return {
+    take(key, now) {
+      if (limit < 1) return { allowed: false, retryAfterSeconds: Math.ceil(windowMs / 1000) };
+      const current = windows.get(key);
+      if (!current || now - current.start >= windowMs) {
+        if (!current && windows.size >= maxKeys) {
+          // Drop expired windows first; if every key is live, drop the oldest.
+          for (const [name, w] of windows) if (now - w.start >= windowMs) windows.delete(name);
+          if (windows.size >= maxKeys) {
+            const oldest = windows.keys().next();
+            if (!oldest.done) windows.delete(oldest.value);
+          }
+        }
+        windows.set(key, { start: now, count: 1 });
+        return { allowed: true };
+      }
+      if (current.count >= limit) {
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(1, Math.ceil((current.start + windowMs - now) / 1000)),
+        };
+      }
+      current.count += 1;
+      return { allowed: true };
+    },
+  };
+}
+
+const tooMany = (retryAfterSeconds: number) =>
+  fail(429, 'rate_limited', 'Too many requests. Try again shortly.', {
+    'Retry-After': String(retryAfterSeconds),
+  });
 
 type SignIn = 'yes' | 'no' | 'unknown';
 
@@ -228,17 +292,24 @@ export async function handleTmdbRequest(
   if (request.method !== 'GET')
     return fail(405, 'method_not_allowed', 'Method not allowed.', { Allow: 'GET' });
 
-  const configuredKey = deps.env.TMDB_API_KEY?.trim();
-  const legacyKey = deps.env.TMDB?.trim();
-  const key = configuredKey && configuredKey.length > 0 ? configuredKey : legacyKey;
+  const key = deps.env.TMDB_API_KEY;
   if (!key) return fail(501, 'not_configured', 'TMDB_API_KEY is not configured on the server.');
 
   const token = /^Bearer\s+(\S+)$/i.exec(request.authorization ?? '')?.[1];
   if (!token) return fail(401, 'unauthenticated', 'Sign in required.');
+  const now = (deps.now ?? Date.now)();
+  if (deps.clientLimiter && request.clientIp) {
+    const decision = deps.clientLimiter.take(request.clientIp, now);
+    if (!decision.allowed) return tooMany(decision.retryAfterSeconds);
+  }
   const signedIn = await checkSignedIn(token, deps);
   if (signedIn === 'no') return fail(401, 'unauthenticated', 'Sign in required.');
   if (signedIn === 'unknown') {
     return fail(503, 'auth_unavailable', 'Could not check your sign-in right now.');
+  }
+  if (deps.userLimiter) {
+    const decision = deps.userLimiter.take(createHash('sha256').update(token).digest('hex'), now);
+    if (!decision.allowed) return tooMany(decision.retryAfterSeconds);
   }
 
   const upstream = buildUpstream(request.url);
@@ -316,6 +387,15 @@ interface NodeResponse {
 }
 
 const signInMemory = createSignInMemory();
+const clientLimiter = createRateLimiter(CLIENT_LIMIT_PER_MINUTE);
+const userLimiter = createRateLimiter(USER_LIMIT_PER_MINUTE);
+
+/** The caller's address. On Vercel the platform sets these, overwriting anything the caller sent. */
+function clientAddress(headers: NodeRequest['headers']): string | undefined {
+  const raw = headers['x-vercel-forwarded-for'] ?? headers['x-forwarded-for'];
+  const first = (Array.isArray(raw) ? raw[0] : raw)?.split(',')[0]?.trim();
+  return first !== undefined && first !== '' ? first : undefined;
+}
 
 export default async function handler(req: NodeRequest, res: NodeResponse): Promise<void> {
   const authorization = req.headers.authorization;
@@ -324,8 +404,9 @@ export default async function handler(req: NodeRequest, res: NodeResponse): Prom
       method: req.method ?? 'GET',
       url: req.url ?? '/',
       authorization: Array.isArray(authorization) ? authorization[0] : authorization,
+      clientIp: clientAddress(req.headers),
     },
-    { env: process.env, fetch, signInMemory },
+    { env: process.env, fetch, signInMemory, clientLimiter, userLimiter },
   );
   res.statusCode = result.status;
   for (const [name, value] of Object.entries(result.headers)) res.setHeader(name, value);

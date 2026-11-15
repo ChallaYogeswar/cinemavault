@@ -13,11 +13,11 @@ import { join, resolve } from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
 import { chromium } from 'playwright';
 import { createFakeSupabase, movieRow } from './fakeSupabase.mjs';
+import { e2eHeaders, watchCsp } from './cspMonitor.mjs';
 import { createStaticServer } from './staticServer.mjs';
 
 const appRoot = resolve(import.meta.dirname, '../..');
 const work = mkdtempSync(join(tmpdir(), 'cv-a11y-'));
-const viteCli = resolve(appRoot, 'node_modules', 'vite', 'bin', 'vite.js');
 const supabase = createFakeSupabase();
 const user = supabase.addUser('a11y@test.dev', 'pw-a11y-1', []);
 const rows = [
@@ -40,7 +40,7 @@ for (const [title, genre, watched, rating, kind] of rows) {
   );
 }
 const supabasePort = await supabase.listen();
-execFileSync(process.execPath, [viteCli, 'build', '--outDir', join(work, 'app'), '--emptyOutDir'], {
+execFileSync('npx', ['vite', 'build', '--outDir', join(work, 'app'), '--emptyOutDir'], {
   cwd: appRoot,
   stdio: 'pipe',
   env: {
@@ -50,10 +50,14 @@ execFileSync(process.execPath, [viteCli, 'build', '--outDir', join(work, 'app'),
     VITE_APP_ENV: 'development',
   },
 });
-const web = createStaticServer(join(work, 'app'), (_req, res) => {
-  res.writeHead(501, { 'Content-Type': 'application/json' });
-  res.end('{"code":"not_configured"}');
-});
+const web = createStaticServer(
+  join(work, 'app'),
+  (_req, res) => {
+    res.writeHead(501, { 'Content-Type': 'application/json' });
+    res.end('{"code":"not_configured"}');
+  },
+  { headers: e2eHeaders(`http://127.0.0.1:${supabasePort}`) },
+);
 const base = `http://127.0.0.1:${await web.listen()}`;
 const browser = await chromium.launch(
   process.env.E2E_CHROMIUM_PATH ? { executablePath: process.env.E2E_CHROMIUM_PATH } : {},
@@ -68,7 +72,12 @@ const pass = (message) => console.log(`PASS  ${message}`);
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 async function audit(page, label) {
-  const { violations } = await new AxeBuilder({ page }).withTags(TAGS).analyze();
+  // `preload: false`: axe would otherwise fetch cross-origin stylesheets (here Google Fonts) itself,
+  // from the page, which the policy rightly refuses and which would hide real violations.
+  const { violations } = await new AxeBuilder({ page })
+    .options({ preload: false })
+    .withTags(TAGS)
+    .analyze();
   if (violations.length === 0) return pass(`axe: ${label}`);
   for (const v of violations) {
     fail(`axe: ${label} — ${v.id} (${v.impact}) ×${String(v.nodes.length)}: ${v.help}`);
@@ -82,6 +91,7 @@ const settle = (page) => page.waitForTimeout(400);
 
 async function run(viewport, name) {
   const context = await browser.newContext({ viewport });
+  const violations = await watchCsp(context);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -130,6 +140,9 @@ async function run(viewport, name) {
   await page.keyboard.press('Escape');
   await context.close();
   if (errors.length) fail(`page errors [${name}]: ${errors.join(' | ')}`);
+  if (violations.length) {
+    fail(`Content-Security-Policy violations [${name}]: ${JSON.stringify(violations.slice(0, 4))}`);
+  } else pass(`no Content-Security-Policy violations [${name}]`);
 }
 
 await run({ width: 390, height: 844 }, 'phone 390px');

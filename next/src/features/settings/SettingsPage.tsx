@@ -7,7 +7,9 @@ import type { Role } from '@/domain/permissions';
 import { InstallCard } from '@/pwa/InstallCard';
 import { loadBackend } from '@/services/env';
 import { card } from './cardStyle';
+import { DataTransferCard } from './DataTransferCard';
 import { DeviceDataCard } from './DeviceDataCard';
+import { useOutboxEntries } from '@/features/sync/useOutbox';
 import { PasswordCard } from './PasswordCard';
 import { ProfileCard } from './ProfileCard';
 
@@ -43,8 +45,11 @@ function AccountCard() {
   const { actions } = useAuth();
   const [busy, setBusy] = useState<'here' | 'everywhere' | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<'here' | 'everywhere' | null>(null);
+  const unsent = useOutboxEntries().length;
 
   const leave = (scope: 'here' | 'everywhere') => {
+    setConfirming(null);
     setBusy(scope);
     const run = scope === 'here' ? actions.signOut() : actions.signOutEverywhere();
     void run.then((result) => {
@@ -71,11 +76,20 @@ function AccountCard() {
           <dt className="text-muted">Access</dt>
           <dd>
             {session.role === 'owner' ? 'Owner — can change the library' : 'Viewer — view only'}
-            {session.roleVerified ? '' : ' (not verified)'}
+            {session.roleVerified
+              ? ''
+              : session.roleFromDevice
+                ? ' (as last confirmed on this device)'
+                : ' (not verified)'}
           </dd>
         </div>
       </dl>
-      {session.roleVerified ? null : (
+      {session.roleVerified ? null : session.roleFromDevice ? (
+        <p role="status" className="text-muted mt-3 text-sm">
+          You’re offline, so this is the access your device last confirmed. Changes you make are
+          kept here and checked by the server when you reconnect.
+        </p>
+      ) : (
         <p role="status" className="text-muted mt-3 text-sm">
           We couldn’t confirm your access just now, so the app is treating you as a viewer. Your
           library is safe; editing returns once this is confirmed.
@@ -85,6 +99,41 @@ function AccountCard() {
         <p role="alert" className="text-danger mt-3 text-sm">
           {problem}
         </p>
+      ) : null}
+      {confirming ? (
+        <div
+          role="alertdialog"
+          aria-labelledby="unsent-title"
+          className="border-danger/40 mt-4 rounded-2xl border p-4"
+        >
+          <p id="unsent-title" className="font-semibold">
+            {unsent === 1
+              ? '1 change has not reached the server.'
+              : `${String(unsent)} changes have not reached the server.`}
+          </p>
+          <p className="text-muted mt-1 text-sm">
+            They are kept only on this device. Signing out deletes them for good. Go online and let
+            them sync first, or sign out anyway and lose them.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirming(null);
+              }}
+            >
+              Stay signed in
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                leave(confirming);
+              }}
+            >
+              Sign out and discard them
+            </Button>
+          </div>
+        </div>
       ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         {runtime.kind === 'supabase' ? (
@@ -96,7 +145,8 @@ function AccountCard() {
           variant="secondary"
           disabled={busy !== null}
           onClick={() => {
-            leave('here');
+            if (unsent > 0) setConfirming('here');
+            else leave('here');
           }}
         >
           {busy === 'here' ? 'Signing out…' : 'Sign out'}
@@ -106,7 +156,8 @@ function AccountCard() {
             variant="ghost"
             disabled={busy !== null}
             onClick={() => {
-              leave('everywhere');
+              if (unsent > 0) setConfirming('everywhere');
+              else leave('everywhere');
             }}
           >
             {busy === 'everywhere' ? 'Signing out…' : 'Sign out of all devices'}
@@ -184,6 +235,7 @@ export function SettingsPage() {
       <AccountCard />
       <ProfileCard />
       <PasswordCard />
+      <DataTransferCard />
       <DeviceDataCard />
       <PreviewControls />
     </section>

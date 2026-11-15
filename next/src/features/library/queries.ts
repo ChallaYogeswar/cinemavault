@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   skipToken,
   useMutation,
@@ -11,7 +11,10 @@ import { useMovieRepository } from '@/app/repository';
 import { useRuntime } from '@/app/runtime';
 import { loadLibrary, type LibrarySource } from '@/data/local/loadLibrary';
 import { useSession } from '@/app/session';
+import { useOutboxEntries } from '@/features/sync/useOutbox';
+import { useQueueing } from '@/features/sync/useQueueing';
 import type { Movie } from '@/domain/movie';
+import { applyOutbox } from '@/domain/outbox';
 import { can } from '@/domain/permissions';
 import { RepositoryError } from '@/data/repositories/repositoryError';
 import { SESSION_CHANGED, err, sessionChanged, type Result } from '@/domain/result';
@@ -47,8 +50,16 @@ export function useMoviesQuery() {
   const { libraryCache } = useRuntime();
   const origin = useOrigin();
   const queryClient = useQueryClient();
+  const entries = useOutboxEntries();
+  // The loaded list stays exactly what the server (or the saved copy) said; changes still waiting
+  // to be sent are laid over it only for display, so they never reach the saved copy.
+  const withWaitingChanges = useCallback(
+    (movies: readonly Movie[]) => applyOutbox(movies, entries, origin.userId),
+    [entries, origin.userId],
+  );
   return useQuery({
     queryKey: origin.queryKey,
+    select: withWaitingChanges,
     queryFn: async (): Promise<readonly Movie[]> => {
       const loaded = await loadLibrary({
         repository,
@@ -82,22 +93,30 @@ export function useLibrarySource(): LibrarySource | null {
 }
 
 /**
- * What the signed-in person may do RIGHT NOW. Writes are online-only: while the saved copy is on
- * screen nothing can be added, edited or deleted, whatever the role (the server remains the
- * authority on role; this only avoids offering actions that cannot succeed).
+ * What the signed-in person may do RIGHT NOW. On a real account, a change made while the server
+ * cannot be reached is kept on this device and sent later, so the saved copy does not stop it. On
+ * sample data nothing is kept on the device, so there writes stay online-only. Either way the
+ * server remains the authority on role; this only avoids offering actions that cannot succeed.
  */
 export function useWriteAccess() {
   const session = useSession();
   const source = useLibrarySource();
+  const queueing = useQueueing().available;
   const savedCopy = source?.origin === 'cache';
   return {
-    /** The saved copy is on screen, so changes have to wait for the server. */
+    /** The saved copy is on screen. */
     savedCopy,
-    /** Allowed by role AND possible right now. */
-    can: (action: Parameters<typeof can>[1]) => can(session.role, action) && !savedCopy,
+    /** Allowed by role AND possible right now (a change is queued if the server cannot be reached). */
+    can: (action: Parameters<typeof can>[1]) =>
+      can(session.role, action) && (queueing || !savedCopy),
     /** Allowed by role, whether or not the server is reachable. */
     roleAllows: (action: Parameters<typeof can>[1]) => can(session.role, action),
   };
+}
+
+/** True while the library on screen is the copy saved on this device, i.e. the server was unreachable. */
+function onSavedCopy(queryClient: QueryClient, userId: string): boolean {
+  return queryClient.getQueryData<LibrarySource>(librarySourceKey(userId))?.origin === 'cache';
 }
 
 /**
@@ -157,11 +176,25 @@ export function useCreateMovie() {
   const repository = useMovieRepository();
   const origin = useOrigin();
   const queryClient = useQueryClient();
+  const queue = useQueueing();
   return useMutation({
-    mutationFn: (input: MovieInputValues) => guarded(origin, () => repository.create(input)),
+    mutationFn: (input: MovieInputValues) =>
+      guarded(origin, async () => {
+        // The id is chosen here, before anything is sent. If the reply is lost and the change is
+        // then queued and sent again, the SAME id makes the repeat harmless: never two copies.
+        const id = crypto.randomUUID();
+        if (queue.available && onSavedCopy(queryClient, origin.userId)) {
+          return queue.create(id, input);
+        }
+        const result = await repository.create(input, { id });
+        if (!result.ok && result.error.code === 'network' && queue.available) {
+          return queue.create(id, input);
+        }
+        return result;
+      }),
     onSuccess: async (result) => {
       relearnRoleIfRefused(queryClient, origin, result);
-      if (!result.ok) return;
+      if (!result.ok || result.queued) return; // a queued title is shown from the waiting list, never written into the loaded one
       const created = result.value;
       await reconcileLibrary(queryClient, origin, (list) =>
         list.some((movie) => movie.id === created.id) ? list : [...list, created],
@@ -181,11 +214,27 @@ export function useUpdateMovie() {
   const repository = useMovieRepository();
   const origin = useOrigin();
   const queryClient = useQueryClient();
+  const queue = useQueueing();
   return useMutation({
     mutationFn: ({ id, input, expectedUpdatedAt }: UpdateVariables) =>
-      guarded(origin, () => repository.update(id, input, expectedUpdatedAt)),
+      guarded(origin, async () => {
+        // A title that already has a waiting change keeps going through the queue, so the two
+        // can never reach the server in the wrong order.
+        if (
+          queue.available &&
+          (onSavedCopy(queryClient, origin.userId) || (await queue.hasEntry(id)))
+        ) {
+          return queue.update(id, input, expectedUpdatedAt);
+        }
+        const result = await repository.update(id, input, expectedUpdatedAt);
+        if (!result.ok && result.error.code === 'network' && queue.available) {
+          return queue.update(id, input, expectedUpdatedAt);
+        }
+        return result;
+      }),
     onSuccess: async (result) => {
       relearnRoleIfRefused(queryClient, origin, result);
+      if (result.ok && result.queued) return;
       if (result.ok) {
         const updated = result.value;
         await reconcileLibrary(queryClient, origin, (list) =>
@@ -207,11 +256,25 @@ export function useRemoveMovie() {
   const repository = useMovieRepository();
   const origin = useOrigin();
   const queryClient = useQueryClient();
+  const queue = useQueueing();
   return useMutation({
     mutationFn: ({ id, expectedUpdatedAt }: RemoveVariables) =>
-      guarded(origin, () => repository.remove(id, expectedUpdatedAt)),
+      guarded(origin, async (): Promise<Result<void>> => {
+        if (
+          queue.available &&
+          (onSavedCopy(queryClient, origin.userId) || (await queue.hasEntry(id)))
+        ) {
+          return queue.remove(id, expectedUpdatedAt);
+        }
+        const result = await repository.remove(id, expectedUpdatedAt);
+        if (!result.ok && result.error.code === 'network' && queue.available) {
+          return queue.remove(id, expectedUpdatedAt);
+        }
+        return result;
+      }),
     onSuccess: async (result, { id }) => {
       relearnRoleIfRefused(queryClient, origin, result);
+      if (result.ok && result.queued) return;
       if (result.ok) {
         await reconcileLibrary(queryClient, origin, (list) =>
           list.filter((movie) => movie.id !== id),

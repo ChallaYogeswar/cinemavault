@@ -13,6 +13,15 @@ import {
   type SnoozeStore,
   type StoredMetadata,
 } from './deviceData';
+import { coalesce, outboxEntrySchema, toEntry, type OutboxEntry } from '@/domain/outbox';
+import type { Role } from '@/domain/permissions';
+import {
+  MAX_ROLE_AGE_MS,
+  type EnqueueResult,
+  type OutboxStore,
+  type RoleStore,
+  type StoredRole,
+} from './outboxStore';
 import {
   CACHE_FORMAT_VERSION,
   MAX_CACHE_AGE_MS,
@@ -43,6 +52,7 @@ interface SnapshotMeta {
  *   1  movies (key id), meta (key key)
  *   2  + history (auto-increment seq), metadata (key, indexed by savedAt)   [M5: Discover, posters]
  *   3  + snoozed (key movieId, indexed by until)                              [M5.2: "Not now"]
+ *   4  + outbox (key movieId, indexed by queuedAt), session (key key)         [M6.2: offline edits, last confirmed role]
  * To change the tables, add `db.version(2).stores({...})` BELOW the existing line and never edit a
  * shipped version. To change what a snapshot contains, bump CACHE_FORMAT_VERSION instead: old
  * snapshots are then dropped and refilled from the server, which is always safe for a cache.
@@ -58,6 +68,15 @@ interface StoredHistory {
 interface StoredSnooze {
   movieId: string;
   until: string;
+}
+
+/** One row per title with a waiting change: the key IS the title's id, so there can never be two. */
+type StoredOutbox = OutboxEntry;
+
+interface StoredSession {
+  key: 'role';
+  role: Role;
+  savedAt: string;
 }
 
 interface StoredMetadataRow {
@@ -79,6 +98,8 @@ class LibraryDatabase extends Dexie {
   history!: Table<StoredHistory, number>;
   metadata!: Table<StoredMetadataRow, string>;
   snoozed!: Table<StoredSnooze, string>;
+  outbox!: Table<StoredOutbox, string>;
+  session!: Table<StoredSession, string>;
 
   constructor(name: string, options: Pick<DexieOptions, 'indexedDB' | 'IDBKeyRange'>) {
     super(name, options);
@@ -86,6 +107,7 @@ class LibraryDatabase extends Dexie {
     // Additive: an existing version-1 database is upgraded in place and keeps its snapshot.
     this.version(2).stores({ history: '++seq', metadata: 'key, savedAt' });
     this.version(3).stores({ snoozed: 'movieId, until' });
+    this.version(4).stores({ outbox: 'movieId, queuedAt', session: 'key' });
   }
 }
 
@@ -136,6 +158,9 @@ export interface DeviceStore {
   readonly history: HistoryStore;
   readonly metadata: MetadataStore;
   readonly snoozes: SnoozeStore;
+  /** Changes made offline, waiting to be sent. NOT a disposable cache: see OutboxStore. */
+  readonly outbox: OutboxStore;
+  readonly roles: RoleStore;
 }
 
 /** Just the saved library (what M4 exposed). */
@@ -174,6 +199,28 @@ export function createDexieDeviceStore(options: DexieLibraryCacheOptions = {}): 
     } catch {
       /* nothing more can be done; the data is unreachable by any other account anyway */
     }
+  };
+
+  /**
+   * A saved library that cannot be trusted is removed. Normally that means the whole database, but
+   * if changes made offline are waiting in it they are the only copy of what the person typed, so
+   * only the library tables are cleared and the waiting changes stay.
+   */
+  const discardSnapshot = async (userId: string): Promise<void> => {
+    try {
+      const db = databaseFor(userId);
+      await db.open();
+      if ((await db.outbox.count()) > 0) {
+        await db.transaction('rw', db.movies, db.meta, async () => {
+          await db.movies.clear();
+          await db.meta.clear();
+        });
+        return;
+      }
+    } catch {
+      /* fall through: an unreadable database cannot be partially cleaned */
+    }
+    await destroy(userId);
   };
 
   /**
@@ -219,13 +266,13 @@ export function createDexieDeviceStore(options: DexieLibraryCacheOptions = {}): 
           // Rows without the record that vouches for them: an interrupted or foreign write. Our own
           // writes cannot produce this (rows and meta commit in one transaction), so it is doubtful
           // and private data may be sitting there. Delete it. Nothing at all is simply "no copy".
-          if (rows.length > 0) await destroy(validId);
+          if (rows.length > 0) await discardSnapshot(validId);
           return null;
         }
 
         const checked = checkSnapshot(meta, rows, validId, now());
         if (checked === null) {
-          await destroy(validId);
+          await discardSnapshot(validId);
           return null;
         }
         return checked;
@@ -407,7 +454,118 @@ export function createDexieDeviceStore(options: DexieLibraryCacheOptions = {}): 
       }),
   };
 
-  return { library, history, metadata, snoozes };
+  const outbox: OutboxStore = {
+    list: (userId) =>
+      forAccount<readonly OutboxEntry[]>(userId, [], async (db) => {
+        const rows = await db.outbox.orderBy('queuedAt').toArray();
+        return rows.flatMap((row) => {
+          const parsed = outboxEntrySchema.safeParse(row);
+          return parsed.success ? [toEntry(parsed.data)] : [];
+        });
+      }),
+
+    enqueue: (userId, op, at) =>
+      forAccount<EnqueueResult>(userId, { ok: false, reason: 'unavailable' }, async (db) =>
+        db.transaction('rw', db.outbox, async (): Promise<EnqueueResult> => {
+          const row = await db.outbox.get(op.movieId);
+          const parsed = row ? outboxEntrySchema.safeParse(row) : null;
+          // A row that cannot be read is neither overwritten nor trusted: refuse, keep it as it is.
+          if (row && !parsed?.success) return { ok: false, reason: 'unavailable' };
+          const result = coalesce(parsed?.success ? toEntry(parsed.data) : undefined, op, at);
+          if (result.action === 'blocked') {
+            return {
+              ok: false,
+              reason: result.reason === 'deleted' ? 'blocked_deleted' : 'blocked_needs_attention',
+            };
+          }
+          if (result.action === 'drop') {
+            await db.outbox.delete(op.movieId);
+            return { ok: true, entry: null };
+          }
+          await db.outbox.put(result.entry);
+          return { ok: true, entry: result.entry };
+        }),
+      ),
+
+    settle: (userId, movieId, rev, accepted) =>
+      // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- a write has no result to return
+      forAccount<void>(userId, undefined, async (db) => {
+        await db.transaction('rw', db.outbox, async () => {
+          const row = await db.outbox.get(movieId);
+          const parsed = row ? outboxEntrySchema.safeParse(row) : null;
+          if (!parsed?.success) return;
+          const entry = toEntry(parsed.data);
+          if (entry.rev === rev) {
+            await db.outbox.delete(movieId);
+            return;
+          }
+          // Changed again while being sent. Keep the newer change, re-based onto what the server now holds.
+          if (accepted.updatedAt === null) return; // the title is gone; a newer change to it cannot apply
+          await db.outbox.put({
+            ...entry,
+            kind: entry.kind === 'create' ? 'update' : entry.kind,
+            baseUpdatedAt: accepted.updatedAt,
+          });
+        });
+      }),
+
+    needsAttention: (userId, movieId, rev, reason, message) =>
+      // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- a write has no result to return
+      forAccount<void>(userId, undefined, async (db) => {
+        await db.transaction('rw', db.outbox, async () => {
+          const row = await db.outbox.get(movieId);
+          const parsed = row ? outboxEntrySchema.safeParse(row) : null;
+          if (!parsed?.success || parsed.data.rev !== rev) return;
+          await db.outbox.put({ ...toEntry(parsed.data), state: 'attention', reason, message });
+        });
+      }),
+
+    keepMine: (userId, movieId, baseUpdatedAt) =>
+      forAccount<boolean>(userId, false, async (db) =>
+        db.transaction('rw', db.outbox, async () => {
+          const row = await db.outbox.get(movieId);
+          const parsed = row ? outboxEntrySchema.safeParse(row) : null;
+          if (!parsed?.success) return false;
+          const entry = toEntry(parsed.data);
+          // A create has no server version to re-base onto: it is simply tried again.
+          if (entry.kind !== 'create' && baseUpdatedAt === null) return false;
+          const { reason: _reason, message: _message, ...rest } = entry;
+          await db.outbox.put({
+            ...rest,
+            state: 'pending',
+            rev: entry.rev + 1,
+            baseUpdatedAt: entry.kind === 'create' ? null : baseUpdatedAt,
+          });
+          return true;
+        }),
+      ),
+
+    discard: (userId, movieId) =>
+      // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- a write has no result to return
+      forAccount<void>(userId, undefined, async (db) => {
+        await db.outbox.delete(movieId);
+      }),
+  };
+
+  const roles: RoleStore = {
+    get: (userId) =>
+      forAccount<StoredRole | null>(userId, null, async (db) => {
+        const row = await db.session.get('role');
+        // Whatever is stored is only believed if it is exactly one of the two known roles.
+        const stored: string | undefined = row?.role;
+        if (!row || (stored !== 'owner' && stored !== 'viewer')) return null;
+        const age = now().getTime() - Date.parse(row.savedAt);
+        if (Number.isNaN(age) || age > MAX_ROLE_AGE_MS || age < -5 * 60_000) return null;
+        return { role: row.role, savedAt: row.savedAt };
+      }),
+    put: (userId, role, at) =>
+      // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- a write has no result to return
+      forAccount<void>(userId, undefined, async (db) => {
+        await db.session.put({ key: 'role', role, savedAt: at.toISOString() });
+      }),
+  };
+
+  return { library, history, metadata, snoozes, outbox, roles };
 }
 
 function safeId(userId: string): string | null {

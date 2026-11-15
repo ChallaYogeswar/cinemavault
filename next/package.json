@@ -19,6 +19,8 @@
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
     "check:bundle": "node scripts/check-bundle.mjs dist",
+    "check:headers": "node scripts/sync-security-headers.mjs --check",
+    "gate:data": "node scripts/data-gate.mjs",
     "check:deployment": "node scripts/check-deployment.mjs",
     "e2e": "node tests/e2e/offline.e2e.mjs",
     "perf": "node tests/e2e/perf.e2e.mjs",

@@ -1,7 +1,9 @@
+import { useEffect } from 'react';
 import { Link, useRouteError } from 'react-router-dom';
 import { buttonClass } from '@/components/ui/buttonStyles';
 import { Button } from '@/components/ui/Button';
 import { isChunkLoadError } from './chunkError';
+import { reportError } from './errorReporter';
 
 /**
  * What a person sees instead of a blank page when a screen fails to draw or to load. It names no
@@ -9,8 +11,10 @@ import { isChunkLoadError } from './chunkError';
  */
 export function RouteError() {
   const error = useRouteError();
-  // Reported to the developer console only; the page stays calm and free of internals.
-  console.error('Screen failed', error);
+  // Reported (scrubbed) through the error hook; the page stays calm and free of internals.
+  useEffect(() => {
+    reportError(error, 'route');
+  }, [error]);
   const loading = isChunkLoadError(error);
   return (
     <section

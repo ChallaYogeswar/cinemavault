@@ -80,7 +80,12 @@ function EditForm({ latest }: { readonly latest: Movie }) {
     if (isSessionChanged(result)) return;
     if (result.ok) {
       dirty.current = false;
-      toast.show('success', `Saved changes to “${result.value.title}”.`);
+      toast.show(
+        'success',
+        result.queued
+          ? `Changes to “${result.value.title}” are saved on this device and will sync when you’re back online.`
+          : `Saved changes to “${result.value.title}”.`,
+      );
       close();
       return;
     }

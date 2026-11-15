@@ -109,13 +109,11 @@ Posters, overviews and trailer links come from TMDB through `api/tmdb.ts`, a Ver
 
 | Variable                   | Value                                                                     |
 | -------------------------- | ------------------------------------------------------------------------- |
-| `TMDB_API_KEY`             | TMDB v3 API key or v4 read-access token; legacy `TMDB` is accepted        |
+| `TMDB_API_KEY`             | TMDB v3 API key or v4 read-access token                                   |
 | `SUPABASE_URL`             | the project this deployment signs users in with                           |
 | `SUPABASE_PUBLISHABLE_KEY` | that project's publishable key (the `VITE_` pair is accepted as fallback) |
 
 **Vercel → Settings → General → Root Directory must be `next`.** The repository also contains the older `api/tmdb.js` (it hard-codes the production Supabase project), and which one is served depends on that setting. After deploying, run `npm run check:deployment -- https://<url> --token <access token>`: it fails with "Root Directory is not next" when the wrong proxy answers.
-
-Use `TMDB_API_KEY` for new deployments. Existing projects with the server-side variable named `TMDB` continue to work; rename it when convenient.
 
 Without the key the app works as before with placeholder posters. See `docs/architecture.md` (M5.1) for what is kept on the device.
 

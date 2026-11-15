@@ -15,7 +15,6 @@ import { createFakeSupabase, movieRow } from './fakeSupabase.mjs';
 import { createStaticServer } from './staticServer.mjs';
 
 const appRoot = resolve(import.meta.dirname, '../..');
-const viteCli = resolve(appRoot, 'node_modules', 'vite', 'bin', 'vite.js');
 const TITLES = Number(process.env.PERF_TITLES ?? 5000);
 const CPU = Number(process.env.PERF_CPU ?? 4);
 
@@ -57,7 +56,7 @@ for (let i = 0; i < TITLES; i += 1) {
   );
 }
 const supabasePort = await supabase.listen();
-execFileSync(process.execPath, [viteCli, 'build', '--outDir', join(work, 'app'), '--emptyOutDir'], {
+execFileSync('npx', ['vite', 'build', '--outDir', join(work, 'app'), '--emptyOutDir'], {
   cwd: appRoot,
   stdio: 'pipe',
   env: {

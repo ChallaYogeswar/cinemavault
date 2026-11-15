@@ -290,6 +290,130 @@ export function defineMovieRepositoryContract(
       });
     });
 
+    describe('create with a chosen id (replaying a change queued offline)', () => {
+      const ID = fixtureId(9001);
+
+      it('uses the id it is given', async () => {
+        const created = must(await repo.create(input({ title: 'Chosen Id' }), { id: ID }));
+        expect(created.id).toBe(ID);
+        expect(must(await repo.get(ID)).title).toBe('Chosen Id');
+      });
+
+      it('sending the same create twice never adds a second copy: the repeat is refused and the first stays', async () => {
+        const before = must(await repo.list()).length;
+        must(await repo.create(input({ title: 'Once Only' }), { id: ID }));
+        const again = await repo.create(input({ title: 'Once Only' }), { id: ID });
+        expect(again).toMatchObject({ ok: false, error: { code: 'conflict' } });
+        expect(must(await repo.list())).toHaveLength(before + 1);
+        expect(must(await repo.get(ID)).title).toBe('Once Only'); // the caller can see its own earlier attempt landed
+      });
+
+      it('an id that belongs to a deleted title is never reused', async () => {
+        const created = must(await repo.create(input({ title: 'Gone Soon' }), { id: ID }));
+        must(await repo.remove(ID, created.updatedAt));
+        const again = await repo.create(input({ title: 'Different Title' }), { id: ID });
+        expect(again).toMatchObject({ ok: false, error: { code: 'conflict' } });
+        expect(await repo.get(ID)).toMatchObject({ ok: false, error: { code: 'not_found' } });
+      });
+
+      it('the duplicate-title rule still applies to a chosen id', async () => {
+        must(await repo.create(input({ title: 'Same Title' })));
+        const dup = await repo.create(input({ title: 'Same Title' }), { id: ID });
+        expect(dup).toMatchObject({
+          ok: false,
+          error: { code: 'conflict', reason: 'duplicate_identity' },
+        });
+      });
+
+      it('a viewer is refused with a chosen id too', async () => {
+        s.setRole('viewer');
+        expect(await repo.create(input(), { id: ID })).toMatchObject({
+          ok: false,
+          error: { code: 'forbidden' },
+        });
+      });
+    });
+
+    describe('createMany (import)', () => {
+      const rows = (...titles: string[]): MovieInputValues[] =>
+        titles.map((title) => input({ title, year: 2024 }));
+
+      it('saves every valid row, in order, each with the same derived fields as create', async () => {
+        const before = must(await repo.list()).length;
+        const out = must(await repo.createMany(rows('Import One', 'Import Two', 'Import Three')));
+        expect(out.skipped).toEqual([]);
+        expect(out.created.map((m) => m.title)).toEqual([
+          'Import One',
+          'Import Two',
+          'Import Three',
+        ]);
+        expect(out.created.every((m) => m.normalizedTitle === m.title.toLowerCase())).toBe(true);
+        expect(must(await repo.list())).toHaveLength(before + 3);
+      });
+
+      it('skips a duplicate of the library, a repeat inside the call and an invalid row, saving the rest', async () => {
+        const seeded = first(must(await repo.list()));
+        const out = must(
+          await repo.createMany([
+            movieToInput(seeded), // already in the library
+            input({ title: 'Fresh A' }),
+            input({ title: 'fresh   a' }), // same title again inside this call
+            input({ title: '' }), // invalid
+            input({ title: 'Fresh B' }),
+          ]),
+        );
+        expect(out.created.map((m) => m.title)).toEqual(['Fresh A', 'Fresh B']);
+        const byIndex = new Map(out.skipped.map((x) => [x.index, x.error]));
+        expect(byIndex.get(0)).toMatchObject({ code: 'conflict', reason: 'duplicate_identity' });
+        expect(byIndex.get(2)).toMatchObject({ code: 'conflict', reason: 'duplicate_identity' });
+        expect(byIndex.get(3)).toMatchObject({ code: 'validation' });
+        expect(byIndex.size).toBe(3);
+      });
+
+      it('is idempotent: running the same import twice adds nothing the second time', async () => {
+        const batch = rows('Twice A', 'Twice B');
+        expect(must(await repo.createMany(batch)).created).toHaveLength(2);
+        const again = must(await repo.createMany(batch));
+        expect(again.created).toEqual([]);
+        expect(again.skipped).toHaveLength(2);
+      });
+
+      it('never changes or removes an existing title', async () => {
+        const before = must(await repo.list());
+        must(await repo.createMany(rows('Only Additions')));
+        const after = must(await repo.list());
+        for (const old of before) expect(after).toContainEqual(old);
+      });
+
+      it('accepts an empty call, and refuses more than 500 rows', async () => {
+        expect(must(await repo.createMany([]))).toEqual({ created: [], skipped: [] });
+        const many = Array.from({ length: 501 }, (_, i) => input({ title: `Bulk ${String(i)}` }));
+        expect(await repo.createMany(many)).toMatchObject({
+          ok: false,
+          error: { code: 'validation' },
+        });
+      });
+
+      it('a viewer is refused as a whole and nothing is saved', async () => {
+        s.setRole('viewer');
+        expect(await repo.createMany(rows('Viewer Try'))).toMatchObject({
+          ok: false,
+          error: { code: 'forbidden' },
+        });
+        s.setRole('owner');
+        expect(must(await repo.list()).some((m) => m.title === 'Viewer Try')).toBe(false);
+      });
+
+      it('reports a connection failure as a whole and then recovers', async () => {
+        s.failNext({ code: 'network', message: 'down' });
+        expect(await repo.createMany(rows('Net Try'))).toMatchObject({
+          ok: false,
+          error: { code: 'network' },
+        });
+        expect(must(await repo.createMany(rows('Net Try'))).created).toHaveLength(1);
+      });
+    });
+
     describe('legacy normalized titles (imported rows spell them without punctuation)', () => {
       const legacy = async (title: string, normalized: string) => {
         const created = must(await repo.create(input({ title, year: 2012 })));
@@ -305,6 +429,18 @@ export function defineMovieRepositoryContract(
             error: { code: 'conflict', reason: 'duplicate_identity' },
           });
         }
+      });
+
+      it('createMany compares against the stored legacy spelling too', async () => {
+        await legacy('Barfi!', 'barfi');
+        const out = must(
+          await repo.createMany([
+            input({ title: 'BARFI?!', year: 2012 }), // same title as the planted one
+            input({ title: 'Barfi!', year: 2013 }), // a different year is a different title
+          ]),
+        );
+        expect(out.created.map((m) => m.year)).toEqual([2013]);
+        expect(out.skipped.map((x) => x.index)).toEqual([0]);
       });
 
       it('but a different year or media type is a different title', async () => {

@@ -3,7 +3,11 @@ import type { Movie } from '@/domain/movie';
 import { can, type Role } from '@/domain/permissions';
 import { conflict, err, ok, type AppError, type Result } from '@/domain/result';
 import { movieInputSchema, type MovieInputValues } from '@/domain/validation';
-import type { MovieRepository } from '@/data/repositories/movieRepository';
+import {
+  CREATE_MANY_MAX,
+  type CreateManyOutcome,
+  type MovieRepository,
+} from '@/data/repositories/movieRepository';
 import { MOCK_OWNER_ID, createSeedMovies } from './fixtures';
 
 export interface MockRepositoryOptions {
@@ -19,7 +23,7 @@ export interface MockRepositoryOptions {
   readonly alwaysFail?: AppError;
 }
 
-export type HoldableMethod = 'list' | 'create' | 'update' | 'remove';
+export type HoldableMethod = 'list' | 'create' | 'createMany' | 'update' | 'remove';
 
 export interface MockMovieRepository extends MovieRepository {
   /** Demo/test hook: the next call, whichever method, fails with this error. */
@@ -150,7 +154,7 @@ export function createMockMovieRepository(
       return movie?.deletedAt === null ? ok(movie) : err('not_found', 'Title not found.');
     },
 
-    async create(input) {
+    async create(input, createOptions) {
       const failure = await begin();
       if (failure) return failure;
       if (!can(getRole(), 'movie:create')) return forbidden('add');
@@ -158,10 +162,14 @@ export function createMockMovieRepository(
       if (!parsed.ok) return parsed;
       const existing = duplicateOf(parsed.value, null);
       if (existing) return duplicateError(existing);
+      // Like the database's primary key: an id that exists (even as a tombstone) is never reused.
+      if (createOptions?.id !== undefined && store.has(createOptions.id)) {
+        return conflict('duplicate_identity', 'A title with this id already exists.');
+      }
       const stamp = nextTimestamp(null);
       const movie: Movie = {
         ...parsed.value,
-        id: newId(),
+        id: createOptions?.id ?? newId(),
         ownerId,
         normalizedTitle: normalizeTitle(parsed.value.title),
         createdAt: stamp,
@@ -170,6 +178,50 @@ export function createMockMovieRepository(
       };
       store.set(movie.id, movie);
       return settle('create', ok(movie));
+    },
+
+    async createMany(inputs) {
+      const failure = await begin();
+      if (failure) return failure;
+      if (!can(getRole(), 'movie:create')) return forbidden('add');
+      if (inputs.length > CREATE_MANY_MAX) {
+        return err('validation', `Add at most ${String(CREATE_MANY_MAX)} titles at a time.`);
+      }
+      const created: Movie[] = [];
+      const skipped: { index: number; error: AppError }[] = [];
+      inputs.forEach((input, index) => {
+        const parsed = parse(input);
+        if (!parsed.ok) {
+          skipped.push({ index, error: parsed.error });
+          return;
+        }
+        const existing = duplicateOf(parsed.value, null);
+        if (existing) {
+          skipped.push({
+            index,
+            error: {
+              code: 'conflict',
+              reason: 'duplicate_identity',
+              message: `“${existing.title}” is already in your library.`,
+            },
+          });
+          return;
+        }
+        const stamp = nextTimestamp(null);
+        const movie: Movie = {
+          ...parsed.value,
+          id: newId(),
+          ownerId,
+          normalizedTitle: normalizeTitle(parsed.value.title),
+          createdAt: stamp,
+          updatedAt: stamp,
+          deletedAt: null,
+        };
+        store.set(movie.id, movie);
+        created.push(movie);
+      });
+      const outcome: CreateManyOutcome = { created, skipped };
+      return settle('createMany', ok(outcome));
     },
 
     async update(id, input, expectedUpdatedAt) {

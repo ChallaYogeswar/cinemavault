@@ -15,6 +15,7 @@ interface Props {
   readonly store: ActiveUserStore;
   readonly role: Role;
   readonly roleVerified?: boolean;
+  readonly roleFromDevice?: boolean;
   readonly retryRole?: () => void;
   readonly email?: string | null;
   readonly children: ReactNode;
@@ -37,6 +38,7 @@ function SignedIn({
   userId,
   role,
   roleVerified = true,
+  roleFromDevice = false,
   retryRole = noop,
   email = null,
   children,
@@ -53,12 +55,13 @@ function SignedIn({
       role,
       getRole,
       roleVerified,
+      roleFromDevice,
       retryRole,
       userId,
       email,
       isCurrent: () => store.epoch() === epoch,
     }),
-    [role, getRole, roleVerified, retryRole, userId, email, epoch, store],
+    [role, getRole, roleVerified, roleFromDevice, retryRole, userId, email, epoch, store],
   );
   return <SessionContext value={value}>{children}</SessionContext>;
 }

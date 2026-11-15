@@ -99,3 +99,7 @@ It writes `rehearsal-output/backup-….json` (rows plus a digest) and a report, 
 - **No database change.** M4 adds nothing to `supabase/migrations`; the production database is still only read. The fingerprint, RLS suite and rehearsal results from M3/M3.1 stand.
 - **A new kind of data exists on users' devices** (the saved library, per account, plus the shell cache). It is disposable: every part of it is rebuilt from the server, so rolling back to the old app needs no data action. The old app uses different storage names and is unaffected. If `next/` is rolled back after being deployed, deploy the kill-switch worker (architecture.md) so installed copies stop serving the shell.
 - **Cutover additions:** serve `sw.js` / `index.html` / the manifest uncached (`next/vercel.json`); the old app registers no service worker (searched the repository), so `next/`'s worker is the only one on the origin; if the old app is ever served from the same origin and scope as `next/`, the two must not both exist; run the manual offline and install checks in `release-checklist.md`.
+
+## Cutover (M6.3)
+
+The step-by-step, with go/no-go rows, the read-only integrity gate (`scripts/data-gate.mjs`), the smoke test and the rollback table, is `docs/cutover-runbook.md`. Nothing in it has been run against production by the automated tooling.

@@ -16,6 +16,7 @@ import {
   type MockMovieRepository,
 } from '@/data/mock/mockMovieRepository';
 import type { HistoryStore, SnoozeStore } from '@/data/local/deviceData';
+import type { OutboxStore, RoleStore } from '@/data/local/outboxStore';
 import type { MetadataService } from '@/services/tmdb/metadataService';
 import type { LibraryCache } from '@/data/local/libraryCache';
 import type { Movie } from '@/domain/movie';
@@ -47,6 +48,8 @@ interface Options {
     history: HistoryStore | null;
     metadata: MetadataService | null;
     snoozes?: SnoozeStore | null;
+    outbox?: OutboxStore | null;
+    roles?: RoleStore | null;
   };
   /** While this returns true every repository call fails as if the connection were down. */
   readonly networkDown?: () => boolean;
@@ -86,6 +89,8 @@ export function renderFullApp({
     history: device?.history ?? null,
     metadata: device?.metadata ?? null,
     snoozes: device?.snoozes ?? null,
+    outbox: device?.outbox ?? null,
+    roles: device?.roles ?? null,
     repositoryFor: (userId, getRole) => {
       if (customRepository) return customRepository(userId, getRole);
       const repo = createMockMovieRepository({
@@ -114,7 +119,8 @@ export function renderFullApp({
             : guard(() => repo.list(), false);
         },
         get: (id) => guard(() => repo.get(id), false),
-        create: (input) => guard(() => repo.create(input), true),
+        create: (input, options) => guard(() => repo.create(input, options), true),
+        createMany: (inputs) => guard(() => repo.createMany(inputs), true),
         update: (id, input, at) => guard(() => repo.update(id, input, at), true),
         remove: (id, at) => guard(() => repo.remove(id, at), true),
       };

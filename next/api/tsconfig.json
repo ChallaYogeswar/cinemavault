@@ -1,0 +1,6 @@
+{
+  "$comment": "Vercel compiles api/*.ts with the tsconfig nearest the function. Without this file it used a default non-strict config with no Node types and printed bogus errors at build time.",
+  "extends": "../tsconfig.node.json",
+  "compilerOptions": { "tsBuildInfoFile": null },
+  "include": ["./*.ts"]
+}

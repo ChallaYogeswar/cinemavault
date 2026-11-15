@@ -72,6 +72,8 @@ export function renderApp({
                   libraryCache: null,
                   history: null,
                   snoozes: null,
+                  outbox: null,
+                  roles: null,
                   metadata: null,
                   repositoryFor: () => {
                     throw new Error('renderApp supplies the repository directly');

@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { MOVIE_COLUMNS, inputToColumns, rowToMovie } from '@/data/mappers/movieMapper';
-import type { MovieRepository } from '@/data/repositories/movieRepository';
+import {
+  CREATE_MANY_MAX,
+  type CreateManyOutcome,
+  type MovieRepository,
+} from '@/data/repositories/movieRepository';
 import { comparableTitle, normalizeTitle } from '@/domain/identity';
 import type { Movie } from '@/domain/movie';
 import { can, type Role } from '@/domain/permissions';
@@ -140,6 +144,70 @@ export function createSupabaseMovieRepository(
     return { code: 'forbidden', message: 'Your account isn’t allowed to make this change.' };
   };
 
+  const duplicateError = (title: string): AppError => ({
+    code: 'conflict',
+    reason: 'duplicate_identity',
+    message: `“${title}” is already in your library.`,
+  });
+
+  /** Identity keys of every live title, read page by page (no row cap can hide a duplicate). */
+  const listIdentities = async (): Promise<Result<Set<string>>> => {
+    const keys = new Set<string>();
+    let after: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const lastId: string | null = after;
+      const reply = await run<
+        { id: string; normalized_title: string; media_type: string; year: number | null }[]
+      >(() => {
+        let query = client
+          .from('movies')
+          .select('id, normalized_title, media_type, year')
+          .eq('owner_id', userId)
+          .is('deleted_at', null)
+          .order('id', { ascending: true })
+          .limit(pageSize);
+        if (lastId !== null) query = query.gt('id', lastId);
+        return query;
+      });
+      if (!reply.ok) return reply;
+      const batch = reply.value ?? [];
+      for (const row of batch) {
+        keys.add(
+          `${row.media_type}|${comparableTitle(row.normalized_title)}|${row.year === null ? '' : String(row.year)}`,
+        );
+      }
+      const last = batch[batch.length - 1];
+      if (batch.length < pageSize || last === undefined) return ok(keys);
+      after = last.id;
+    }
+    return err('unknown', 'The library is too large to check for duplicates safely.');
+  };
+
+  const createOne = async (input: MovieInputValues, id?: string): Promise<Result<Movie>> => {
+    if (!can(getRole(), 'movie:create')) return forbidden('add');
+    const parsed = parse(input);
+    if (!parsed.ok) return parsed;
+    const existing = await findDuplicate(parsed.value, null);
+    if (!existing.ok) return existing;
+    if (existing.value !== null) return duplicate(existing.value);
+
+    const reply = await run<Record<string, unknown>>(() =>
+      client
+        .from('movies')
+        .insert({
+          ...(id === undefined ? {} : { id }),
+          owner_id: userId,
+          ...inputToColumns(parsed.value),
+        })
+        .select(MOVIE_COLUMNS)
+        .single(),
+    );
+    if (!reply.ok) return reply;
+    return reply.value === null
+      ? err('unknown', 'The server did not return the saved title.')
+      : readMovie(reply.value);
+  };
+
   return {
     async list() {
       const rows: unknown[] = [];
@@ -204,25 +272,66 @@ export function createSupabaseMovieRepository(
       return readMovie(reply.value);
     },
 
-    async create(input) {
-      if (!can(getRole(), 'movie:create')) return forbidden('add');
-      const parsed = parse(input);
-      if (!parsed.ok) return parsed;
-      const existing = await findDuplicate(parsed.value, null);
-      if (!existing.ok) return existing;
-      if (existing.value !== null) return duplicate(existing.value);
+    create: (input, createOptions) => createOne(input, createOptions?.id),
 
-      const reply = await run<Record<string, unknown>>(() =>
+    async createMany(inputs) {
+      if (!can(getRole(), 'movie:create')) return forbidden('add');
+      if (inputs.length > CREATE_MANY_MAX) {
+        return err('validation', `Add at most ${String(CREATE_MANY_MAX)} titles at a time.`);
+      }
+      const skipped: { index: number; error: AppError }[] = [];
+      const accepted: { index: number; input: MovieInputValues }[] = [];
+      inputs.forEach((raw, index) => {
+        const parsed = parse(raw);
+        if (parsed.ok) accepted.push({ index, input: parsed.value });
+        else skipped.push({ index, error: parsed.error });
+      });
+      if (accepted.length === 0) return ok({ created: [], skipped });
+
+      // One read of every live identity, then every row is compared in code (finding F9: the stored
+      // spellings differ, so the database cannot do this comparison itself).
+      const known = await listIdentities();
+      if (!known.ok) return known;
+      const fresh: { index: number; input: MovieInputValues }[] = [];
+      const inBatch = new Set<string>();
+      for (const row of accepted) {
+        const key = `${row.input.mediaType}|${comparableTitle(normalizeTitle(row.input.title))}|${row.input.year === null ? '' : String(row.input.year)}`;
+        if (known.value.has(key) || inBatch.has(key)) {
+          skipped.push({ index: row.index, error: duplicateError(row.input.title) });
+        } else {
+          inBatch.add(key);
+          fresh.push(row);
+        }
+      }
+      if (fresh.length === 0) return ok({ created: [], skipped });
+
+      const reply = await run<Record<string, unknown>[]>(() =>
         client
           .from('movies')
-          .insert({ owner_id: userId, ...inputToColumns(parsed.value) })
-          .select(MOVIE_COLUMNS)
-          .single(),
+          .insert(fresh.map((row) => ({ owner_id: userId, ...inputToColumns(row.input) })))
+          .select(MOVIE_COLUMNS),
       );
-      if (!reply.ok) return reply;
-      return reply.value === null
-        ? err('unknown', 'The server did not return the saved title.')
-        : readMovie(reply.value);
+      if (reply.ok) {
+        const created: Movie[] = [];
+        for (const raw of reply.value ?? []) {
+          const movie = readMovie(raw);
+          if (!movie.ok) return movie;
+          created.push(movie.value);
+        }
+        return ok<CreateManyOutcome>({ created, skipped });
+      }
+      // Someone else added one of these between our read and our insert (the database index
+      // refused the whole statement, so nothing was saved). Settle it row by row instead.
+      if (reply.error.code !== 'conflict') return reply;
+      const created: Movie[] = [];
+      for (const row of fresh) {
+        const one = await createOne(row.input);
+        if (one.ok) created.push(one.value);
+        else if (one.error.code === 'conflict')
+          skipped.push({ index: row.index, error: one.error });
+        else return one;
+      }
+      return ok<CreateManyOutcome>({ created, skipped });
     },
 
     async update(id, input, expectedUpdatedAt) {

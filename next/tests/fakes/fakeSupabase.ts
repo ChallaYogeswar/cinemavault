@@ -88,7 +88,7 @@ export function createFakeSupabase(options: FakeSupabaseOptions): FakeSupabase {
       }
     });
 
-  const violation = (row: MovieRow): DbErrorShape | null => {
+  const violation = (row: MovieRow, alsoPresent: readonly MovieRow[] = []): DbErrorShape | null => {
     if (row.title.trim() === '' || row.normalized_title.trim() === '') {
       return {
         code: '23514',
@@ -107,7 +107,7 @@ export function createFakeSupabase(options: FakeSupabaseOptions): FakeSupabase {
     }
     if (row.deleted_at === null) {
       // NULL years never collide in a Postgres unique index.
-      const clash = store.some(
+      const clash = [...store, ...alsoPresent].some(
         (other) =>
           other.id !== row.id &&
           other.deleted_at === null &&
@@ -135,7 +135,7 @@ export function createFakeSupabase(options: FakeSupabaseOptions): FakeSupabase {
 
   class Builder implements PromiseLike<Reply> {
     private op: 'select' | 'insert' | 'update' = 'select';
-    private payload: Record<string, unknown> = {};
+    private payload: Record<string, unknown> | Record<string, unknown>[] = {};
     private readonly filters: Filter[] = [];
     private orderBy: { column: string; ascending: boolean } | null = null;
     private max: number | null = null;
@@ -148,7 +148,7 @@ export function createFakeSupabase(options: FakeSupabaseOptions): FakeSupabase {
       this.columns = columns ?? null;
       return this;
     }
-    insert(values: Record<string, unknown>) {
+    insert(values: Record<string, unknown> | Record<string, unknown>[]) {
       this.op = 'insert';
       this.payload = values;
       return this;
@@ -260,20 +260,36 @@ export function createFakeSupabase(options: FakeSupabaseOptions): FakeSupabase {
             status: 403,
           };
         }
-        const values = this.payload;
+        const list = Array.isArray(this.payload) ? this.payload : [this.payload];
         const stamp = tick();
-        const row = {
-          id: crypto.randomUUID(),
-          deleted_at: null,
-          ...values,
-          created_at: stamp,
-          updated_at: stamp,
-        } as MovieRow;
-        const problem = violation(row);
-        if (problem)
-          return { data: null, error: problem, status: problem.code === '23505' ? 409 : 400 };
-        store.push(row);
-        return this.shape([row]);
+        const added: MovieRow[] = [];
+        for (const values of list) {
+          const row = {
+            id: crypto.randomUUID(),
+            deleted_at: null,
+            ...values,
+            created_at: stamp,
+            updated_at: stamp,
+          } as MovieRow;
+          // The primary key: an id that exists (live or deleted) can never be inserted again.
+          if ([...store, ...added].some((other) => other.id === row.id)) {
+            return {
+              data: null,
+              error: {
+                code: '23505',
+                message: 'duplicate key value violates unique constraint "movies_pkey"',
+              },
+              status: 409,
+            };
+          }
+          // One statement is all-or-nothing: rows added earlier in THIS statement count too.
+          const problem = violation(row, added);
+          if (problem)
+            return { data: null, error: problem, status: problem.code === '23505' ? 409 : 400 };
+          added.push(row);
+        }
+        store.push(...added);
+        return this.shape(added);
       }
 
       const visible = store.filter((row) => matches(row, this.filters));
