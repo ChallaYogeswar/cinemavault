@@ -5,7 +5,7 @@ Goal: prove that `next/` deploys, signs in, installs, works offline and can be r
 ## 0. Preconditions
 
 - The `next/` code is on a GitHub branch (not `main`) and `next-ci` is green on it.
-- Supabase: the **development** project `rgcicevuflinfhalyomp` only. The production project (`qhopjfqpnmoinggejgvt`) must not appear in any variable of this Vercel project.
+- Supabase: the **development** project `rgcicevuflinfhalyomp` only. The current production project (`ermjvreodaeovawbsbyh`) must not appear in any variable of this Vercel preview project.
 - Decided: F1, F2, F6 (hide `next/` from the old project), F9, F10 (see the release checklist).
 
 ## 1. Create a separate Vercel project

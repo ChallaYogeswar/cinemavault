@@ -51,5 +51,6 @@ export default defineConfig({
     include: ['tests/unit/**/*.test.{ts,tsx}', 'tests/integration/**/*.test.{ts,tsx}'],
     css: false,
     restoreMocks: true,
+    maxWorkers: 1,
   },
 });

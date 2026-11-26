@@ -58,7 +58,7 @@ describe('parseEnv', () => {
 });
 
 describe('production-database guard', () => {
-  const PROD = 'https://qhopjfqpnmoinggejgvt.supabase.co';
+  const PROD = 'https://ermjvreodaeovawbsbyh.supabase.co';
 
   it.each(['development', 'preview', undefined])(
     'refuses the production project when VITE_APP_ENV is %s',
@@ -128,7 +128,7 @@ describe('resolveBackend', () => {
 
   it('a dev build pointed at production is misconfigured, not connected', () => {
     const r = resolveBackend(
-      { ...good, VITE_SUPABASE_URL: 'https://qhopjfqpnmoinggejgvt.supabase.co' },
+      { ...good, VITE_SUPABASE_URL: 'https://ermjvreodaeovawbsbyh.supabase.co' },
       'development',
     );
     expect(r.kind).toBe('misconfigured');

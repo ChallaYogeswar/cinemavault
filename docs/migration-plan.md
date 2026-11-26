@@ -1,5 +1,7 @@
 # Migration plan and audit findings
 
+Historical report: this plan records the prior production project, `qhopjfqpnmoinggejgvt`, which was later deleted. The replacement project is `ermjvreodaeovawbsbyh`; the measurements below are not current data.
+
 ## Rules
 
 - No production data or schema is changed by `next/` work. Experiments use a separate Supabase project or branch.

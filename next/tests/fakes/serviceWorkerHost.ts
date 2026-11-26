@@ -101,12 +101,10 @@ export function startServiceWorker(
     async fetch(url, init = {}) {
       const request = new Request(new URL(url, ORIGIN), { method: init.method ?? 'GET' });
       // `mode` cannot be set to "navigate" through the constructor; the worker only reads it.
-      const shaped = Object.create(request, {
-        mode: { value: init.mode ?? 'cors' },
-      }) as Request;
+      Object.defineProperty(request, 'mode', { value: init.mode ?? 'cors' });
       let answer: Promise<Response> | undefined;
       handlers.get('fetch')?.({
-        request: shaped,
+        request,
         respondWith: (response: Promise<Response>) => {
           answer = response;
         },

@@ -29,7 +29,7 @@ describe('Providers: which backend the app starts on', () => {
   it('a build pointed at production without declaring itself production is refused', () => {
     vi.stubEnv('VITE_DATA_SOURCE', 'supabase');
     vi.stubEnv('VITE_APP_ENV', 'development');
-    vi.stubEnv('VITE_SUPABASE_URL', 'https://qhopjfqpnmoinggejgvt.supabase.co');
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://ermjvreodaeovawbsbyh.supabase.co');
     vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_0123456789abcdefghijkl');
     render(<Providers />);
     expect(screen.getByRole('alert')).toHaveTextContent(/PRODUCTION database/);

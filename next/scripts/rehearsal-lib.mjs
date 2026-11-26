@@ -3,7 +3,7 @@
 // tested against a real Postgres (tests/unit/rehearsal.test.ts) and run by rehearse-migration.mjs.
 import { createHash } from 'node:crypto';
 
-export const PRODUCTION_PROJECT_REFS = ['qhopjfqpnmoinggejgvt'];
+export const PRODUCTION_PROJECT_REFS = ['ermjvreodaeovawbsbyh'];
 
 export const COLUMNS = [
   'id',

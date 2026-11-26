@@ -75,7 +75,7 @@ describe('rehearsal: pure helpers', () => {
     expect(() => {
       assertSafeTargets({
         sourceUrl: 'https://devref.supabase.co',
-        destUrl: 'https://qhopjfqpnmoinggejgvt.supabase.co',
+        destUrl: 'https://ermjvreodaeovawbsbyh.supabase.co',
       });
     }).toThrow(/PRODUCTION/);
     expect(() => {
@@ -83,7 +83,7 @@ describe('rehearsal: pure helpers', () => {
     }).toThrow(/same project/);
     expect(() => {
       assertSafeTargets({
-        sourceUrl: 'https://qhopjfqpnmoinggejgvt.supabase.co',
+        sourceUrl: 'https://ermjvreodaeovawbsbyh.supabase.co',
         destUrl: 'https://dev.supabase.co',
       });
     }).not.toThrow(); // reading production as the SOURCE is the whole point

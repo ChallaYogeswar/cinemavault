@@ -2,6 +2,8 @@
 
 Status: written for the M3 review fix (P1 "migration history"). Production was only **read**.
 
+Historical snapshot: the production project recorded below was later deleted. Current production Supabase is `ermjvreodaeovawbsbyh`; do not use this report as its live migration history.
+
 ## 1. What actually exists
 
 | Where                              | Applied migrations (version · name)                                                                                                                                         |

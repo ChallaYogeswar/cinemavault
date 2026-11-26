@@ -12,6 +12,7 @@
 Supabase → SQL Editor → paste `supabase/migrations/20261019120000_owner_viewer_roles.sql` → Run.
 Then run `supabase/migrations/20261021120000_profile_contact_sync.sql` (keeps the profile email/phone in step when a user changes it).
 Both are re-runnable. The account that currently owns the most movies becomes the **owner**; every new signup is a **viewer**.
+On a fresh project, create the owner account and import its movie rows first, then rerun the roles migration so that account is promoted. The signup trigger alone always creates viewers.
 Check: `select email, role from public.profiles;`
 
 ## 2. Auth URL configuration
@@ -20,7 +21,7 @@ Supabase → Authentication → URL Configuration
 - Redirect URLs: `https://cinemavaul.vercel.app/**` (and `http://localhost:3000/**` for local dev)
 
 ## 3. Enable sign-in methods (login page dims any that are off)
-Callback URL for every OAuth provider: `https://qhopjfqpnmoinggejgvt.supabase.co/auth/v1/callback`
+Callback URL for every OAuth provider: `https://ermjvreodaeovawbsbyh.supabase.co/auth/v1/callback`
 - **Google**: Google Cloud Console → OAuth client (Web) → paste Client ID/Secret in Supabase → Providers → Google.
 - **GitHub**: GitHub → Settings → Developer settings → OAuth Apps.
 - **Facebook**: developers.facebook.com → app → Facebook Login.
@@ -41,7 +42,7 @@ demote yourself first).
 ## Fixing "redirect_uri" errors (Google / GitHub)
 Supabase always sends the provider this callback — it must match **exactly** (https, no trailing slash, correct project ref):
 
-    https://qhopjfqpnmoinggejgvt.supabase.co/auth/v1/callback
+    https://ermjvreodaeovawbsbyh.supabase.co/auth/v1/callback
 
 - **GitHub** "The redirect_uri is not associated with this application": GitHub → Settings → Developer settings → OAuth Apps →
   your app (Client ID `Ov23liEBhjjCzSHc1sE5`) → **Authorization callback URL** = the URL above (not the Vercel URL).

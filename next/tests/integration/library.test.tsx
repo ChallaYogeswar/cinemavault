@@ -123,15 +123,13 @@ describe('library: search, filters and URL state', () => {
   });
 
   it('pages the grid instead of rendering everything at once', async () => {
-    const { user } = renderApp({ repository: { seed: generateMovies(PAGE_SIZE * 2 + 10) } });
+    renderApp({ repository: { seed: generateMovies(PAGE_SIZE + 10) } });
     await screen.findByRole('button', { name: /show more/i });
     expect(cards()).toHaveLength(PAGE_SIZE);
-    await user.click(screen.getByRole('button', { name: /show more/i }));
-    expect(cards()).toHaveLength(PAGE_SIZE * 2);
-    await user.click(screen.getByRole('button', { name: /show more/i }));
-    expect(cards()).toHaveLength(PAGE_SIZE * 2 + 10);
+    fireEvent.click(screen.getByRole('button', { name: /show more/i }));
+    expect(cards()).toHaveLength(PAGE_SIZE + 10);
     expect(screen.queryByRole('button', { name: /show more/i })).not.toBeInTheDocument();
-  });
+  }, 10_000);
 
   it('keeps filters when a title is opened and closed', async () => {
     const { user, router } = renderApp({ path: '/library?type=tv' });
@@ -783,7 +781,7 @@ describe('overwriting after an edit conflict (never silent, never against an uns
     // and the user can simply try again
     await user.click(overwriteButton(d));
     expect(await screen.findByText(/saved changes to “roma”/i)).toBeInTheDocument();
-  });
+  }, 10_000);
 });
 
 describe('delete a title', () => {

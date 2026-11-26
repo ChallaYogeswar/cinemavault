@@ -27,7 +27,7 @@ function looksLikeServiceCredential(value: string): boolean {
  * Project refs of PRODUCTION Supabase databases. A development or preview build must never be
  * pointed at one of these: milestone M3 is developed and rehearsed on a separate project.
  */
-export const PRODUCTION_PROJECT_REFS: readonly string[] = ['qhopjfqpnmoinggejgvt'];
+export const PRODUCTION_PROJECT_REFS: readonly string[] = ['ermjvreodaeovawbsbyh'];
 
 /** The project ref is the first label of `<ref>.supabase.co`. */
 export const projectRefOf = (url: string): string => new URL(url).hostname.split('.')[0] ?? '';

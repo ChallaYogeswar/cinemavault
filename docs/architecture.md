@@ -18,7 +18,7 @@ Source of truth: the blueprint (`cinemavault_upgrade.md`). This file records wha
 
 ## Decisions
 
-1. **Parallel app in `next/`.** The root app stays deployable and unchanged until cutover.
+1. **Parallel app in `next/`.** The root app remains the deployed UI until cutover and uses the active production Supabase project.
 2. **One migration history** at `/supabase/migrations`. `next/` never adds a second set.
 3. **Online-first.** The cloud is canonical; the local cache speeds reads and is scoped per user (`cacheDatabaseName`). No offline editing in M1–M3.
 4. **Authorization lives in Postgres RLS.** `resolveRole`/`can` only decide what the UI shows, and they fail closed.
@@ -80,13 +80,14 @@ DEVELOPMENT (what exists today)
                                  · schema built from supabase/migrations
 
 FUTURE PRODUCTION (not done; gated by docs/release-checklist.md)
-  CinemaVault Next ──► validated migration process ──► Production Supabase (qhopjfqpnmoinggejgvt)
+  CinemaVault Next ──► validated migration process ──► Production Supabase (ermjvreodaeovawbsbyh)
                           · backup taken and verified
                           · rehearsed on development, digests compared
                           · schema fingerprint and RLS adversarial suite pass
 
-TODAY, PRODUCTION IS ONLY EVER READ (by the rehearsal script, with SELECT) AND IS STILL SERVED
-BY THE UNCHANGED ROOT APP.  `parseEnv` refuses a production project ref.
+TODAY, THE ROOT APP IS SERVED AT `cinemavaul.vercel.app` AND USES PRODUCTION SUPABASE
+`ermjvreodaeovawbsbyh`. The `next/` rehearsal must continue to use its separate development project;
+`parseEnv` refuses a production project ref in non-production builds.
 ```
 
 ### Role refresh during a live session
