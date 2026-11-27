@@ -6,8 +6,8 @@
  *   GET /api/tmdb?path=/search/multi&query=Inception
  *   GET /api/tmdb?path=/movie/27205/videos
  */
-const SUPABASE_URL = 'https://qhopjfqpnmoinggejgvt.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_bvBb8dJt1bkRLLvIQIYEBw_EVZWq-yo'; // public/publishable key
+const SUPABASE_URL = 'https://ermjvreodaeovawbsbyh.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_aeChTkLuhe_qnET14Iwdpw_906kvOoQ'; // public/publishable key
 
 const ALLOWED = [/^\/search\/multi$/, /^\/(movie|tv)\/\d+\/videos$/];
 

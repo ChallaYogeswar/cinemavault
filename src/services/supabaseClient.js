@@ -9,8 +9,8 @@
 (function (global) {
   'use strict';
 
-  const SUPABASE_URL = 'https://qhopjfqpnmoinggejgvt.supabase.co';
-  const SUPABASE_KEY = 'sb_publishable_bvBb8dJt1bkRLLvIQIYEBw_EVZWq-yo';
+  const SUPABASE_URL = 'https://ermjvreodaeovawbsbyh.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_aeChTkLuhe_qnET14Iwdpw_906kvOoQ';
 
   // Older builds asked each browser to store a URL/key in localStorage (and one build shipped a mistyped
   // project ref). Those values are no longer used; remove them so they can never shadow the real ones.
