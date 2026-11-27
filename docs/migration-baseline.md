@@ -6,11 +6,12 @@ Historical snapshot: the production project recorded below was later deleted. Cu
 
 ## 1. What actually exists
 
-| Where                              | Applied migrations (version · name)                                                                                                                                         |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Repository `supabase/migrations/`  | 5 files, listed below                                                                                                                                                       |
-| Production `qhopjfqpnmoinggejgvt`  | the same 5 (versions identical to the file names)                                                                                                                           |
-| Development `rgcicevuflinfhalyomp` | 4: `20261101044926 initial_schema`, `…44933 align_movie_rating_scale`, `…44953 owner_viewer_roles`, `…45004 profile_contact_sync` (versions are the time they were applied) |
+| Where | Applied migrations (version · name) |
+| --- | --- |
+| Repository `supabase/migrations/` | 8 files: the five historical files below plus three files recovered from current remote history (section 2). |
+| Deleted production `qhopjfqpnmoinggejgvt` | The same five historical files (versions identical to their file names). |
+| Current production `ermjvreodaeovawbsbyh` | Remote versions `20261124202650`, `20261124202714`, and `20261124203421` are present locally; four older local-only versions remain unmatched and must not be pushed blindly. |
+| Development `rgcicevuflinfhalyomp` | 4: `20261101044926 initial_schema`, `…44933 align_movie_rating_scale`, `…44953 owner_viewer_roles`, `…45004 profile_contact_sync` (versions are the time they were applied). |
 
 Repository files, oldest first:
 
@@ -20,16 +21,29 @@ Repository files, oldest first:
 4. `20261019120000_owner_viewer_roles.sql`
 5. `20261021120000_profile_contact_sync.sql`
 
+The current project's recovered remote files are:
+
+1. `20261124202650_cinemavault_initial_schema.sql`
+2. `20261124202714_align_movie_rating_scale.sql`
+3. `20261124203421_profile_contact_sync.sql`
+
+These are preserved as applied-history records. They are not appended to the older five-file
+PGlite baseline: replaying both histories together collides on policies that the newer
+initial-schema migration creates without first dropping. `supabase db push --dry-run` also
+reports older local-only versions; do not use `--include-all` or repair remote history until
+those versions have been reconciled against the current database.
+
 ## 2. Which migration is canonical
 
 **`20260927000100_initial_schema` is the baseline.** `20261015175602_cinemavault_initial_schema` is the same
 file recorded a second time (it was applied through the Supabase dashboard/MCP on 2026-10-15). Every statement in
 it is idempotent (`create … if not exists`, `create or replace`, `drop … if exists`), so replaying it changes nothing.
 
-Evidence, all enforced by `tests/unit/migrationHistory.test.ts` so it cannot drift:
+Evidence, enforced by `tests/unit/migrationHistory.test.ts` and the PGlite migration harness:
 
 - the two files are byte-for-byte equal;
-- the list of files equals production's recorded history, name for name;
+- the repository retains both the five-file historical chain and the three recovered remote files;
+- the historical PGlite baseline applies only its five recorded files, so unrelated remote history is not replayed onto it;
 - a database built **with** the duplicate and one built **without** it have the same schema fingerprint;
 - row-level security is on for all four tables and the rating check is the 0–5 scale.
 
@@ -49,7 +63,7 @@ plus `supabase migration repair` on every project), not a cleanup.
 
 | Test                                                                            | Result                                                                                            |
 | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| PGlite (real PostgreSQL) built from the five literal files, in CI               | builds cleanly; same fingerprint with and without the duplicate file (its own baseline, below)    |
+| PGlite (real PostgreSQL) built from the five literal historical files, in CI   | builds cleanly; same fingerprint with and without the duplicate file (its own baseline, below)    |
 | Development project: the 4 distinct migrations applied through the Supabase API | `8ea6abe519010d495886599d8a56738f`, 149 items                                                     |
 | Real Supabase replay of the full chain in a scratch transaction (rolled back)   | schema unchanged by the replay; development left with its 106 rows (see caveat)                   |
 | Production, read-only                                                           | 150 items, `31d2a757712224d3fa14212f6e38e8f8`; **`8ea6abe5…` once `rls_auto_enable` is excluded** |

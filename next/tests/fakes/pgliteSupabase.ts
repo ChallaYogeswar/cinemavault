@@ -4,18 +4,28 @@ import { movieToRow } from '@/data/mappers/movieMapper';
 import type { Movie } from '@/domain/movie';
 
 /**
- * A REAL Postgres (PGlite, WebAssembly) loaded with the repository's actual migrations, behind
- * the small slice of the supabase-js query builder the repositories use. Each request runs in its
- * own transaction as the `authenticated` role with `auth.uid()` set, exactly how PostgREST does,
- * so row-level security, check constraints, the unique index and the `updated_at` trigger are the
- * real thing, and rows come back through `row_to_json` in PostgREST's wire format (microsecond
- * timestamps with a +00:00 offset, numerics as JSON numbers).
+ * A REAL Postgres (PGlite, WebAssembly) loaded with the historical production migration chain,
+ * behind the small slice of the supabase-js query builder the repositories use. Each request runs
+ * in its own transaction as the `authenticated` role with `auth.uid()` set, exactly how PostgREST
+ * does, so row-level security, check constraints, the unique index and the `updated_at` trigger
+ * are the real thing, and rows come back through `row_to_json` in PostgREST's wire format
+ * (microsecond timestamps with a +00:00 offset, numerics as JSON numbers).
  */
 const MIGRATIONS = import.meta.glob<string>('../../../supabase/migrations/*.sql', {
   query: '?raw',
   import: 'default',
   eager: true,
 });
+
+// Keep the PGlite product baseline on the historical chain; the recovered remote history
+// cannot be replayed on top of it without reconciling overlapping policies first.
+const HISTORICAL_PRODUCTION_MIGRATIONS = new Set([
+  '20260927000100_initial_schema.sql',
+  '20261015175602_cinemavault_initial_schema.sql',
+  '20261015175654_align_movie_rating_scale.sql',
+  '20261019120000_owner_viewer_roles.sql',
+  '20261021120000_profile_contact_sync.sql',
+]);
 
 const BOOTSTRAP = `
   create role anon nologin; create role authenticated nologin; create role service_role nologin;
@@ -59,10 +69,10 @@ export async function createMigratedDatabase(
 ): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(BOOTSTRAP);
-  for (const file of Object.keys(MIGRATIONS)
-    .sort()
-    .filter((path) => !options.skip?.(path.split('/').pop() ?? path))) {
-    const sql = (MIGRATIONS[file] ?? '').replace('create extension if not exists pgcrypto;', '');
+  for (const [, contents] of migrationFiles().filter(
+    ([name]) => HISTORICAL_PRODUCTION_MIGRATIONS.has(name) && !options.skip?.(name),
+  )) {
+    const sql = contents.replace('create extension if not exists pgcrypto;', '');
     await db.exec(sql);
   }
   return db;

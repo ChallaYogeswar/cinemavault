@@ -14,9 +14,17 @@ const PRODUCTION_HISTORY = [
   '20261021120000_profile_contact_sync.sql',
 ];
 
+const RECOVERED_REMOTE_HISTORY = [
+  '20261124202650_cinemavault_initial_schema.sql',
+  '20261124202714_align_movie_rating_scale.sql',
+  '20261124203421_profile_contact_sync.sql',
+];
+
 describe('migration history', { timeout: 60_000 }, () => {
-  it('the repository holds exactly the history production recorded, in order', () => {
-    expect(migrationFiles().map(([name]) => name)).toEqual(PRODUCTION_HISTORY);
+  it('retains both the historical production chain and the recovered remote migrations', () => {
+    expect(migrationFiles().map(([name]) => name)).toEqual(
+      [...PRODUCTION_HISTORY, ...RECOVERED_REMOTE_HISTORY].sort(),
+    );
   });
 
   it('the two initial-schema files are byte-identical, so the second is a recorded no-op', () => {
@@ -24,7 +32,7 @@ describe('migration history', { timeout: 60_000 }, () => {
     expect(files.get(PRODUCTION_HISTORY[0] ?? '')).toBe(files.get(PRODUCTION_HISTORY[1] ?? ''));
   });
 
-  it('a completely fresh database built from the full history equals one built without the duplicate', async () => {
+  it('the historical baseline built with the duplicate equals one built without it', async () => {
     const full = await createMigratedDatabase();
     const canonical = await createMigratedDatabase({
       skip: (name) => name === '20261015175602_cinemavault_initial_schema.sql',
