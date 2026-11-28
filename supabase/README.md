@@ -71,6 +71,19 @@ supabase db push
 
 Do not commit `.env`, service-role keys, database passwords, or other secrets.
 
+## GitHub preview checks
+
+The Supabase Preview check requires a Supabase preview branch associated with the PR's Git branch.
+This project is on Supabase's Free plan, which cannot create additional preview branches; PRs without
+an associated branch therefore show that integration check as skipped. Live per-PR database checks
+require a plan that supports branching and Automatic branching enabled in the Supabase GitHub
+integration. Keep the existing `main` preview branch associated with Git `main` rather than
+repointing it to a feature branch.
+
+The repository's GitHub Actions checks run the local migration-history and application test suites
+when `supabase/` or the root app files change. These do not replace an isolated live Supabase
+preview database.
+
 ## PR3 boundary
 
 This PR does **not**:

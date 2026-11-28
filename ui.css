@@ -29,7 +29,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .icon-button,.menu-button{width:40px;height:40px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;color:var(--muted);transition:.3s}
 .icon-button:hover,.menu-button:hover{color:var(--text);border-color:rgba(255,255,255,.2);transform:translateY(-2px)}
 .add-button{padding:10px 15px;border-radius:999px;background:var(--text);color:#08090b;font-size:13px;font-weight:800}
-.menu-button{display:none}
+.menu-button{display:grid}.menu-button.active{color:var(--gold);border-color:var(--gold)}
 main{padding-bottom:100px}
 .hero{min-height:820px;position:relative;display:flex;align-items:flex-end;padding:170px clamp(24px,7vw,110px) 100px;overflow:hidden;border-bottom:1px solid var(--line2)}
 .hero-backdrop{position:absolute;inset:0;overflow:hidden}
@@ -208,3 +208,6 @@ body.modal-open{overflow:hidden}
 @media(max-width:560px){.edit-row{grid-template-columns:1fr 1fr}.edit-row label:last-child{grid-column:1/-1}}
 
 .rating-choice{width:auto;height:auto;border:0;background:transparent;font-size:inherit}
+
+/* Off-screen cards skip layout and paint, which keeps clicks on large libraries responsive. */
+.library-grid .movie-card{content-visibility:auto;contain-intrinsic-size:auto 420px}

@@ -1,11 +1,25 @@
 name: next-ci
 
-# Quality gate for the parallel rewrite in next/. It never touches the root application or any database.
+# Quality gate for next/ and root-app smoke tests. It never writes to a Supabase database.
 on:
   push:
-    paths: ["next/**", ".github/workflows/next-ci.yml"]
+    paths:
+      - "next/**"
+      - "app.js"
+      - "tmdbService.js"
+      - "ui.css"
+      - "tests/tmdb-service.test.cjs"
+      - "supabase/**"
+      - ".github/workflows/next-ci.yml"
   pull_request:
-    paths: ["next/**", ".github/workflows/next-ci.yml"]
+    paths:
+      - "next/**"
+      - "app.js"
+      - "tmdbService.js"
+      - "ui.css"
+      - "tests/tmdb-service.test.cjs"
+      - "supabase/**"
+      - ".github/workflows/next-ci.yml"
 
 permissions:
   contents: read
@@ -32,6 +46,12 @@ jobs:
 
       - name: Install (exact, from the lockfile)
         run: npm ci
+
+      - name: Check legacy app JavaScript syntax
+        run: node --check ../app.js && node --check ../tmdbService.js
+
+      - name: Test legacy TMDB service
+        run: node --test ../tests/tmdb-service.test.cjs
 
       - name: Type-check
         run: npm run typecheck
