@@ -144,7 +144,8 @@
     if (!window.CinemaVaultMetadata) return null;
     const remote = await window.CinemaVaultMetadata.fetchCinemaMetadata(movie.title, movie.year);
     // Nothing found (or TMDB unreachable): show without a poster for now, but don't store the miss so a later visit can retry.
-    if (!remote.id && !remote.poster) return null;
+    if (remote?.transient) return { transient: true };
+    if (!remote?.id && !remote?.poster) return null;
     const data = {
       tmdbId: remote.id || null,
       tmdbMediaType: remote.mediaType || movie.media_type,
@@ -179,20 +180,30 @@
     const movie = state.movies.find(x => x.id === card.dataset.movie);
     if (!movie || card.dataset.posterLoading === '1') return;
     card.dataset.posterLoading = '1';
+    const tries = Number(card.dataset.posterTries || 0);
+    const retry = () => {
+      // A temporary failure (busy server, expired token, network blip) must not leave the card blank for good.
+      card.dataset.posterLoading = '0';
+      if (tries >= 3 || !card.isConnected) return;
+      card.dataset.posterTries = String(tries + 1);
+      setTimeout(() => { if (card.isConnected) loadCardPoster(card); }, 1500 * (tries + 1));
+    };
     metadataFor(movie).then(meta => {
       const frame = $('.poster-frame', card);
-      if (!frame || !meta?.poster) return;
+      if (!frame) return;
+      if (!meta?.poster) { if (meta?.transient) retry(); return; }
       const img = document.createElement('img');
-      img.loading = 'lazy';
+      img.loading = 'eager';
       img.decoding = 'async';
       img.alt = movie.title + ' poster';
-      img.src = meta.poster;
       img.onload = () => {
         frame.replaceChildren(img);
         frame.insertAdjacentHTML('beforeend', '<span class="poster-shade"></span>' + (movie.watched ? '<span class="watched-badge">✓</span>' : ''));
         requestAnimationFrame(() => frame.classList.add('loaded'));
       };
-    }).catch(() => {});
+      img.onerror = retry;
+      img.src = meta.poster;
+    }).catch(retry);
   }
 
   function enrichCards(root = document) {
@@ -227,7 +238,7 @@
         '<nav class="main-nav" aria-label="Main navigation">' +
           navItem('home','Home') + navItem('library','Library') + navItem('genres','Genres') + navItem('discover','Discover') + navItem('stats','Stats') +
         '</nav>' +
-        '<div class="top-actions"><button class="icon-button" data-action="search" aria-label="Search">⌕</button><button class="add-button" data-owner-only data-route="add">+ <span>Add</span></button><button class="menu-button" data-action="menu" aria-label="Open menu">☰</button></div>' +
+        '<div class="top-actions"><button class="icon-button" data-action="search" aria-label="Search">⌕</button><button class="add-button" data-owner-only data-route="add">+ <span>Add</span></button><button class="menu-button' + (state.route === 'settings' ? ' active' : '') + '" data-action="settings" aria-label="Settings" title="Settings">⚙</button></div>' +
       '</header>' +
       '<main id="main-content">' + content + '</main>' +
       '<footer class="footer"><span>Private cinema archive</span><span>' + remaining + ' unwatched</span></footer>' +
@@ -997,7 +1008,7 @@
     $$('[data-action="watch-now"]').forEach(el=>el.addEventListener('click',()=>openMovie(state.recommendation?.movie.id)));
     $$('[data-action="skip-recommendation"]').forEach(el=>el.addEventListener('click',async()=>{if(state.recommendation){await CinemaVaultRecommendationEngine.recordResult(state.recommendation.movie,'skipped');toast('Skipped for now.');} if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
     $$('[data-action="shuffle"]').forEach(el=>el.addEventListener('click',async()=>{state.recommendation=null; if(state.route==='home')renderHomeRecommendation(); else renderDiscoverRecommendation(true);}));
-    $$('[data-action="menu"]').forEach(el=>el.addEventListener('click',()=>route('settings')));
+    $$('[data-action="settings"]').forEach(el=>el.addEventListener('click',()=>route('settings')));
     $$('[data-action="trailer"]').forEach(el=>el.addEventListener('click',()=>{}));
     $$('[data-genre]').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')el.click();}));
   }

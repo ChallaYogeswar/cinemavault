@@ -13,12 +13,51 @@
     return window.CINEMAVAULT_TMDB_API_KEY || localStorage.getItem('cv3_tmdb_key') || '';
   }
 
+  // Share the session lookup and cap proxy traffic when a large grid is rendered.
+  let tokenCache = { value: '', at: 0, pending: null };
   async function accessToken() {
-    try { return (await window.CinemaVaultSupabase?.session?.())?.access_token || ''; } catch (_) { return ''; }
+    const now = Date.now();
+    if (tokenCache.value && now - tokenCache.at < 30000) return tokenCache.value;
+    if (!tokenCache.pending) {
+      tokenCache.pending = (async () => {
+        try { return (await window.CinemaVaultSupabase?.session?.())?.access_token || ''; } catch (_) { return ''; }
+      })().then(value => { tokenCache = { value, at: Date.now(), pending: null }; return value; });
+    }
+    return tokenCache.pending;
   }
 
+  const MAX_PARALLEL = 4;
+  let running = 0;
+  const waiting = [];
+  function limited(task) {
+    return new Promise((resolve, reject) => {
+      const start = () => {
+        running += 1;
+        task().then(resolve, reject).finally(() => { running -= 1; const next = waiting.shift(); if (next) next(); });
+      };
+      if (running < MAX_PARALLEL) start(); else waiting.push(start);
+    });
+  }
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
   // Returns a Response-like object, or null if no TMDB access is available at all.
-  async function tmdb(path, params) {
+  function tmdb(path, params) { return limited(() => tmdbOnce(path, params)); }
+
+  async function tmdbOnce(path, params) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const res = await tmdbRequest(path, params);
+      if (!res || !(res.status === 429 || res.status >= 500) || attempt === 2) return res;
+      const retryAfter = Number(res.headers?.get?.('Retry-After'));
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 5000)
+        : 400 * (attempt + 1);
+      await wait(delay);
+    }
+    return null;
+  }
+
+  async function tmdbRequest(path, params) {
+    let proxyResponse = null;
     if (proxyState !== 'missing') {
       try {
         const token = await accessToken();
@@ -26,13 +65,19 @@
           const q = new URLSearchParams({ path, ...params });
           const res = await fetch('/api/tmdb?' + q, { headers: { Authorization: 'Bearer ' + token } });
           if (res.ok) { proxyState = 'ok'; return res; }
-          if (res.status === 404 || res.status === 501 || res.status === 405) proxyState = 'missing';
-          else if (res.status !== 401) return res;
+          if (res.status === 404 || res.status === 501 || res.status === 405) {
+            proxyState = 'missing';
+            proxyResponse = res;
+          } else if (res.status === 401) {
+            proxyResponse = res;
+          } else {
+            return res;
+          }
         }
       } catch (_) { /* fall through to a personal key */ }
     }
     const key = getApiKey();
-    if (!key) return null;
+    if (!key) return proxyResponse;
     const q = new URLSearchParams({ ...params, api_key: key });
     return fetch(API_BASE + path + '?' + q);
   }
@@ -77,8 +122,10 @@
 
     try {
       const searchResponse = await tmdb('/search/multi', { query: cleanTitle });
-      if (!searchResponse) return fallback(cleanTitle); // no proxy and no personal key: don't cache the miss
-      if (!searchResponse.ok) throw new Error('TMDB search failed');
+      if (!searchResponse) return { ...fallback(cleanTitle), transient: true }; // no proxy and no personal key: don't cache the miss
+      if (!searchResponse.ok) {
+        return { ...fallback(cleanTitle), transient: searchResponse.status === 429 || searchResponse.status >= 500 };
+      }
       let searchData = await searchResponse.json();
       // Titles such as "#Alive" or "(500) Days of Summer" can miss on TMDB: retry once without the leading symbols.
       if (!(searchData.results||[]).length && /^[^\p{L}\p{N}]+/u.test(cleanTitle)) {
@@ -106,7 +153,7 @@
       };
       cache.set(key,result);try{localStorage.setItem(key,JSON.stringify(result));}catch(error){}
       return result;
-    } catch (error) { return fallback(cleanTitle); }
+    } catch (error) { return { ...fallback(cleanTitle), transient: true }; }
   }
 
   // Used by Settings to say plainly whether posters can load, and if not, why.
